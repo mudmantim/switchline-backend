@@ -1,8 +1,16 @@
-const express = require('express');
-const app = express();
-
-app.get('/', (req, res) => {
-    res.send('Hello World');
-});
-
-app.listen(3001);
+{
+  "name": "switchline-backend",
+  "version": "1.0.0",
+  "description": "Minimal Express server for Switchline app",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "twilio": "^4.19.0"
+  }
+}
