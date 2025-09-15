@@ -84,6 +84,138 @@ app.get('/api/twilio/test', async (req, res) => {
   }
 });
 
+// Frontend-compatible purchase endpoint
+app.post('/api/twilio/purchase-number', async (req, res) => {
+  try {
+    const { areaCode } = req.body;
+    
+    if (!areaCode) {
+      return res.status(400).json({
+        success: false,
+        error: 'Area code is required'
+      });
+    }
+
+    console.log('Searching for numbers in area code:', areaCode);
+
+    // Search for available numbers
+    const numbers = await client.availablePhoneNumbers('US').local.list({
+      areaCode: areaCode,
+      limit: 1
+    });
+
+    if (numbers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: `No available numbers in area code ${areaCode}`
+      });
+    }
+
+    const selectedNumber = numbers[0];
+    console.log('Purchasing number:', selectedNumber.phoneNumber);
+    
+    // Purchase the number
+    const purchasedNumber = await client.incomingPhoneNumbers.create({
+      phoneNumber: selectedNumber.phoneNumber,
+      voiceUrl: `${req.protocol}://${req.get('host')}/api/voice/webhook`,
+      smsUrl: `${req.protocol}://${req.get('host')}/api/sms/webhook`
+    });
+
+    res.json({
+      success: true,
+      phoneNumber: {
+        sid: purchasedNumber.sid,
+        phoneNumber: purchasedNumber.phoneNumber,
+        friendlyName: purchasedNumber.friendlyName,
+        status: purchasedNumber.status,
+        dateCreated: purchasedNumber.dateCreated
+      }
+    });
+  } catch (error) {
+    console.error('Number purchase error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Frontend-compatible message endpoint
+app.post('/api/twilio/send-message', async (req, res) => {
+  try {
+    const { from, to, message } = req.body;
+    
+    if (!from || !to || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'From, to, and message are required'
+      });
+    }
+
+    console.log('Sending SMS:', { from, to, message: message.substring(0, 50) + '...' });
+    
+    const sentMessage = await client.messages.create({
+      body: message,
+      from: from,
+      to: to
+    });
+
+    res.json({
+      success: true,
+      message: {
+        sid: sentMessage.sid,
+        status: sentMessage.status,
+        direction: sentMessage.direction,
+        dateCreated: sentMessage.dateCreated
+      }
+    });
+  } catch (error) {
+    console.error('SMS send error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Frontend-compatible call endpoint
+app.post('/api/twilio/make-call', async (req, res) => {
+  try {
+    const { from, to } = req.body;
+    
+    if (!from || !to) {
+      return res.status(400).json({
+        success: false,
+        error: 'From and to numbers are required'
+      });
+    }
+
+    console.log('Making call:', { from, to });
+    
+    const call = await client.calls.create({
+      from: from,
+      to: to,
+      url: `${req.protocol}://${req.get('host')}/api/voice/webhook`
+    });
+
+    res.json({
+      success: true,
+      call: {
+        sid: call.sid,
+        status: call.status,
+        direction: call.direction,
+        dateCreated: call.dateCreated
+      }
+    });
+  } catch (error) {
+    console.error('Call error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Debug endpoint - Number search (your working endpoint from September)
 app.get('/debug', async (req, res) => {
   try {
