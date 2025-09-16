@@ -8,7 +8,7 @@ const app = express();
 // Environment variables
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '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';
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
