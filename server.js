@@ -1,24 +1,33 @@
 const express = require('express');
 const cors = require('cors');
 const twilio = require('twilio');
+const stripe = require('stripe');
 
 const app = express();
 
 // Environment variables
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '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';
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://switchline.app';
 
-// Initialize Twilio client
-const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+// Initialize Twilio and Stripe clients
+const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+const stripeClient = stripe(STRIPE_SECRET_KEY);
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: [FRONTEND_URL, 'https://switchline.app', 'http://localhost:3000', 'http://localhost:8080'],
   credentials: true
 }));
 
+// Raw body for Stripe webhooks
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+
+// JSON parsing for other routes
 app.use(express.json());
 
 // Logging middleware
@@ -31,10 +40,11 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'success',
-    message: 'Switchline Backend API',
-    version: '1.0.0',
+    message: 'Switchline Backend API with Stripe Integration',
+    version: '2.0.0',
     environment: NODE_ENV,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    features: ['Twilio Integration', 'Stripe Payments', 'Phone Number Purchase']
   });
 });
 
@@ -64,7 +74,7 @@ app.get('/api/twilio/test', async (req, res) => {
     }
 
     // Test Twilio connection by fetching account info
-    const account = await client.api.accounts(TWILIO_ACCOUNT_SID).fetch();
+    const account = await twilioClient.api.accounts(TWILIO_ACCOUNT_SID).fetch();
     
     res.json({
       status: 'success',
@@ -84,10 +94,14 @@ app.get('/api/twilio/test', async (req, res) => {
   }
 });
 
-// Frontend-compatible purchase endpoint
-app.post('/api/twilio/purchase-number', async (req, res) => {
+// ==============================
+// STRIPE PAYMENT ENDPOINTS
+// ==============================
+
+// Create Stripe checkout session
+app.post('/api/stripe/create-checkout-session', async (req, res) => {
   try {
-    const { areaCode } = req.body;
+    const { areaCode, priceId } = req.body;
     
     if (!areaCode) {
       return res.status(400).json({
@@ -96,10 +110,199 @@ app.post('/api/twilio/purchase-number', async (req, res) => {
       });
     }
 
+    if (!priceId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Price ID is required'
+      });
+    }
+
+    console.log('Creating Stripe checkout session for area code:', areaCode);
+
+    // First check if numbers are available in this area code
+    try {
+      const availableNumbers = await twilioClient.availablePhoneNumbers('US').local.list({
+        areaCode: areaCode,
+        limit: 1
+      });
+
+      if (availableNumbers.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: `No available numbers in area code ${areaCode}`
+        });
+      }
+    } catch (twilioError) {
+      console.error('Twilio availability check failed:', twilioError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to check number availability'
+      });
+    }
+
+    // Create Stripe checkout session
+    const session = await stripeClient.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      success_url: `${FRONTEND_URL}/app?success=true&area_code=${areaCode}`,
+      cancel_url: `${FRONTEND_URL}/app?canceled=true`,
+      metadata: {
+        areaCode: areaCode,
+        service: 'phone_number_purchase',
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    console.log('Stripe session created:', session.id);
+
+    res.json({
+      success: true,
+      sessionId: session.id,
+      url: session.url
+    });
+
+  } catch (error) {
+    console.error('Stripe session creation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Stripe webhook handler
+app.post('/api/stripe/webhook', (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripeClient.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  console.log('Stripe webhook received:', event.type);
+
+  // Handle the checkout.session.completed event
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    handleSuccessfulPayment(session);
+  }
+
+  res.json({ received: true });
+});
+
+// Handle successful payment by purchasing Twilio number
+async function handleSuccessfulPayment(session) {
+  try {
+    const areaCode = session.metadata.areaCode;
+    console.log(`Processing successful payment for area code: ${areaCode}`);
+
+    if (!areaCode) {
+      console.error('No area code in session metadata');
+      return;
+    }
+
+    // Search for available numbers
+    const numbers = await twilioClient.availablePhoneNumbers('US').local.list({
+      areaCode: areaCode,
+      limit: 1
+    });
+
+    if (numbers.length === 0) {
+      console.error(`No available numbers in area code ${areaCode} after payment`);
+      // TODO: Handle this case - maybe refund or offer alternative
+      return;
+    }
+
+    const selectedNumber = numbers[0];
+    console.log('Purchasing number after payment:', selectedNumber.phoneNumber);
+    
+    // Purchase the number
+    const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
+      phoneNumber: selectedNumber.phoneNumber,
+      voiceUrl: `${req.protocol}://${req.get('host')}/api/voice/webhook`,
+      smsUrl: `${req.protocol}://${req.get('host')}/api/sms/webhook`,
+      friendlyName: `Switchline ${areaCode} Number`
+    });
+
+    console.log('Number purchased successfully:', purchasedNumber.phoneNumber);
+    
+    // TODO: Store the number in database with customer information
+    // TODO: Send confirmation email to admin@switchline.app
+    
+  } catch (error) {
+    console.error('Error processing successful payment:', error);
+    // TODO: Handle failed number purchase after successful payment
+    // This should trigger an alert to admin@switchline.app
+  }
+}
+
+// Get Stripe payment status
+app.get('/api/stripe/payment-status/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const session = await stripeClient.checkout.sessions.retrieve(sessionId);
+    
+    res.json({
+      success: true,
+      status: session.payment_status,
+      areaCode: session.metadata.areaCode
+    });
+  } catch (error) {
+    console.error('Error retrieving payment status:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ==============================
+// TWILIO ENDPOINTS (Updated)
+// ==============================
+
+// Frontend-compatible purchase endpoint (now with payment validation)
+app.post('/api/twilio/purchase-number', async (req, res) => {
+  try {
+    const { areaCode, paymentSessionId } = req.body;
+    
+    if (!areaCode) {
+      return res.status(400).json({
+        success: false,
+        error: 'Area code is required'
+      });
+    }
+
+    // If paymentSessionId is provided, validate payment first
+    if (paymentSessionId) {
+      try {
+        const session = await stripeClient.checkout.sessions.retrieve(paymentSessionId);
+        if (session.payment_status !== 'paid') {
+          return res.status(402).json({
+            success: false,
+            error: 'Payment not completed'
+          });
+        }
+      } catch (stripeError) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid payment session'
+        });
+      }
+    }
+
     console.log('Searching for numbers in area code:', areaCode);
 
     // Search for available numbers
-    const numbers = await client.availablePhoneNumbers('US').local.list({
+    const numbers = await twilioClient.availablePhoneNumbers('US').local.list({
       areaCode: areaCode,
       limit: 1
     });
@@ -115,10 +318,11 @@ app.post('/api/twilio/purchase-number', async (req, res) => {
     console.log('Purchasing number:', selectedNumber.phoneNumber);
     
     // Purchase the number
-    const purchasedNumber = await client.incomingPhoneNumbers.create({
+    const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
       phoneNumber: selectedNumber.phoneNumber,
       voiceUrl: `${req.protocol}://${req.get('host')}/api/voice/webhook`,
-      smsUrl: `${req.protocol}://${req.get('host')}/api/sms/webhook`
+      smsUrl: `${req.protocol}://${req.get('host')}/api/sms/webhook`,
+      friendlyName: `Switchline ${areaCode} Number`
     });
 
     res.json({
@@ -154,7 +358,7 @@ app.post('/api/twilio/send-message', async (req, res) => {
 
     console.log('Sending SMS:', { from, to, message: message.substring(0, 50) + '...' });
     
-    const sentMessage = await client.messages.create({
+    const sentMessage = await twilioClient.messages.create({
       body: message,
       from: from,
       to: to
@@ -192,7 +396,7 @@ app.post('/api/twilio/make-call', async (req, res) => {
 
     console.log('Making call:', { from, to });
     
-    const call = await client.calls.create({
+    const call = await twilioClient.calls.create({
       from: from,
       to: to,
       url: `${req.protocol}://${req.get('host')}/api/voice/webhook`
@@ -242,7 +446,7 @@ app.get('/debug', async (req, res) => {
     };
 
     console.log('Twilio search params:', searchParams);
-    const numbers = await client.availablePhoneNumbers('US').local.list(searchParams);
+    const numbers = await twilioClient.availablePhoneNumbers('US').local.list(searchParams);
     
     console.log('Found numbers:', numbers.length);
     if (numbers.length > 0) {
@@ -276,7 +480,7 @@ app.get('/api/numbers/search', async (req, res) => {
       });
     }
 
-    const numbers = await client.availablePhoneNumbers('US').local.list({
+    const numbers = await twilioClient.availablePhoneNumbers('US').local.list({
       areaCode: areaCode,
       limit: parseInt(limit)
     });
@@ -299,7 +503,7 @@ app.get('/api/numbers/search', async (req, res) => {
   }
 });
 
-// Number purchase endpoint
+// Number purchase endpoint (legacy)
 app.post('/api/numbers/purchase', async (req, res) => {
   try {
     const { phoneNumber } = req.body;
@@ -312,10 +516,11 @@ app.post('/api/numbers/purchase', async (req, res) => {
 
     console.log('Purchasing number:', phoneNumber);
     
-    const purchasedNumber = await client.incomingPhoneNumbers.create({
+    const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
       phoneNumber: phoneNumber,
       voiceUrl: `${req.protocol}://${req.get('host')}/api/voice/webhook`,
-      smsUrl: `${req.protocol}://${req.get('host')}/api/sms/webhook`
+      smsUrl: `${req.protocol}://${req.get('host')}/api/sms/webhook`,
+      friendlyName: 'Switchline Number'
     });
 
     res.json({
@@ -348,7 +553,7 @@ app.post('/api/messages/send', async (req, res) => {
 
     console.log('Sending SMS:', { from, to, body: body.substring(0, 50) + '...' });
     
-    const message = await client.messages.create({
+    const message = await twilioClient.messages.create({
       body: body,
       from: from,
       to: to
@@ -418,7 +623,7 @@ app.post('/api/voice/transcription', (req, res) => {
 // List purchased numbers
 app.get('/api/numbers/list', async (req, res) => {
   try {
-    const numbers = await client.incomingPhoneNumbers.list();
+    const numbers = await twilioClient.incomingPhoneNumbers.list();
     
     res.json({
       success: true,
@@ -445,7 +650,7 @@ app.delete('/api/numbers/:sid', async (req, res) => {
     
     console.log('Releasing number with SID:', sid);
     
-    await client.incomingPhoneNumbers(sid).remove();
+    await twilioClient.incomingPhoneNumbers(sid).remove();
     
     res.json({
       success: true,
@@ -466,7 +671,11 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     environment: NODE_ENV,
-    twilioConfigured: !!(TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN)
+    services: {
+      twilio: !!(TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN),
+      stripe: !!STRIPE_SECRET_KEY
+    },
+    contactEmail: 'admin@switchline.app'
   });
 });
 
@@ -475,7 +684,8 @@ app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
     path: req.originalUrl,
-    method: req.method
+    method: req.method,
+    contact: 'admin@switchline.app'
   });
 });
 
@@ -484,7 +694,8 @@ app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({
     error: 'Internal server error',
-    message: err.message
+    message: err.message,
+    contact: 'admin@switchline.app'
   });
 });
 
@@ -494,6 +705,8 @@ app.listen(PORT, () => {
   console.log(`Environment: ${NODE_ENV}`);
   console.log(`Twilio Account SID: ${TWILIO_ACCOUNT_SID ? 'configured' : 'missing'}`);
   console.log(`Twilio Auth Token: ${TWILIO_AUTH_TOKEN ? 'configured' : 'missing'}`);
+  console.log(`Stripe Secret Key: ${STRIPE_SECRET_KEY ? 'configured' : 'missing'}`);
+  console.log(`Contact Email: admin@switchline.app`);
   console.log(`Server URL: http://localhost:${PORT}`);
 });
 
