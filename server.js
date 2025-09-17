@@ -305,44 +305,70 @@ app.get('/api/billing/plans', (req, res) => {
     {
       id: 'basic',
       name: 'Basic',
-      price: 999,
+      price: 900, // $9.00 in cents
+      stripe_price_id: 'price_1S8LY9Lz1CB1flJ349umxvKt',
       currency: 'usd',
       interval: 'month',
       features: [
         '1 Phone Number',
-        '100 Messages/Month',
-        '50 Minutes/Month',
-        'Basic Support'
-      ]
+        'Unlimited Calls & SMS',
+        '30-Day Message History',
+        'Basic Privacy Protection'
+      ],
+      limits: {
+        phone_numbers: 1,
+        message_history_days: 30,
+        international_numbers: false,
+        auto_destruct: false,
+        team_management: false,
+        api_access: false
+      }
     },
     {
-      id: 'pro',
-      name: 'Pro',
-      price: 1999,
+      id: 'professional',
+      name: 'Professional', 
+      price: 1900, // $19.00 in cents
+      stripe_price_id: 'price_1S8LYxLz1CB1flJ3juF5SshM',
       currency: 'usd',
       interval: 'month',
       features: [
-        '5 Phone Numbers',
-        'Unlimited Messages',
-        '500 Minutes/Month',
-        'Priority Support',
-        'Advanced Features'
-      ]
+        '3 Phone Numbers',
+        'Auto-Destruct Messages',
+        'International Numbers',
+        'Call Analytics',
+        'Priority Support'
+      ],
+      limits: {
+        phone_numbers: 3,
+        message_history_days: 90,
+        international_numbers: true,
+        auto_destruct: true,
+        team_management: false,
+        api_access: false
+      }
     },
     {
       id: 'enterprise',
       name: 'Enterprise',
-      price: 4999,
+      price: 4900, // $49.00 in cents  
+      stripe_price_id: 'price_1S8LZNLz1CB1flJ3fgcV0fGL',
       currency: 'usd',
       interval: 'month',
       features: [
-        'Unlimited Phone Numbers',
-        'Unlimited Messages',
-        'Unlimited Minutes',
-        '24/7 Support',
-        'Custom Integrations',
-        'Dedicated Manager'
-      ]
+        '10 Phone Numbers',
+        'Team Management',
+        'API Access',
+        'Advanced Analytics',
+        'Dedicated Support'
+      ],
+      limits: {
+        phone_numbers: 10,
+        message_history_days: 365,
+        international_numbers: true,
+        auto_destruct: true,
+        team_management: true,
+        api_access: true
+      }
     }
   ];
 
@@ -422,6 +448,18 @@ app.post('/api/billing/create-subscription', authenticateToken, async (req, res)
       return res.status(400).json({ error: 'Plan ID and payment method are required' });
     }
 
+    // Get plan details with correct price IDs
+    const planMap = {
+      'basic': { stripe_price_id: 'price_1S8LY9Lz1CB1flJ349umxvKt', name: 'Basic' },
+      'professional': { stripe_price_id: 'price_1S8LYxLz1CB1flJ3juF5SshM', name: 'Professional' },
+      'enterprise': { stripe_price_id: 'price_1S8LZNLz1CB1flJ3fgcV0fGL', name: 'Enterprise' }
+    };
+
+    const selectedPlan = planMap[plan_id];
+    if (!selectedPlan) {
+      return res.status(400).json({ error: 'Invalid plan ID' });
+    }
+
     // Get or create Stripe customer
     let customer;
     const userResult = await db.query(
@@ -446,20 +484,11 @@ app.post('/api/billing/create-subscription', authenticateToken, async (req, res)
       );
     }
 
-    // Create subscription
+    // Create subscription using the correct price ID
     const subscription = await stripe.subscriptions.create({
       customer: customer.id,
       items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: {
-            name: `Switchline ${plan_id.charAt(0).toUpperCase() + plan_id.slice(1)} Plan`
-          },
-          unit_amount: plan_id === 'basic' ? 999 : plan_id === 'pro' ? 1999 : 4999,
-          recurring: {
-            interval: 'month'
-          }
-        }
+        price: selectedPlan.stripe_price_id
       }],
       payment_settings: {
         payment_method_types: ['card'],
@@ -468,7 +497,7 @@ app.post('/api/billing/create-subscription', authenticateToken, async (req, res)
       expand: ['latest_invoice.payment_intent']
     });
 
-    // Update user plan
+    // Update user plan and subscription
     await db.query(
       'UPDATE users SET plan = $1, subscription_id = $2 WHERE id = $3',
       [plan_id, subscription.id, req.user.userId]
@@ -511,12 +540,91 @@ app.post('/api/billing/cancel-subscription', authenticateToken, async (req, res)
   }
 });
 
-// Twilio Routes
-app.get('/api/twilio/test', (req, res) => {
-  res.json({ 
-    message: 'Twilio integration ready',
-    account_sid: process.env.TWILIO_ACCOUNT_SID ? 'configured' : 'not configured'
-  });
+// Plan checking middleware
+const checkPlanLimits = async (req, res, next) => {
+  try {
+    const userResult = await db.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
+    const userPlan = userResult.rows[0]?.plan || 'basic';
+    
+    req.userPlan = userPlan;
+    req.planLimits = {
+      'basic': { 
+        phone_numbers: 1,
+        message_history_days: 30,
+        international_numbers: false,
+        auto_destruct: false,
+        team_management: false,
+        api_access: false
+      },
+      'professional': { 
+        phone_numbers: 3,
+        message_history_days: 90,
+        international_numbers: true,
+        auto_destruct: true,
+        team_management: false,
+        api_access: false
+      },
+      'enterprise': { 
+        phone_numbers: 10,
+        message_history_days: 365,
+        international_numbers: true,
+        auto_destruct: true,
+        team_management: true,
+        api_access: true
+      }
+    }[userPlan];
+    
+    next();
+  } catch (error) {
+    console.error('Plan check error:', error);
+    res.status(500).json({ error: 'Failed to check plan limits' });
+  }
+};
+
+// Get user's phone numbers
+app.get('/api/phone/list', authenticateToken, async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT phone_number, twilio_sid, area_code, location, status, created_at FROM phone_numbers WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.user.userId]
+    );
+
+    res.json({ 
+      numbers: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('Phone list error:', error);
+    res.status(500).json({ error: 'Failed to retrieve phone numbers' });
+  }
+});
+
+// Get user profile with plan info
+app.get('/api/user/profile', authenticateToken, checkPlanLimits, async (req, res) => {
+  try {
+    const userResult = await db.query(
+      'SELECT email, plan, credits, status FROM users WHERE id = $1',
+      [req.user.userId]
+    );
+
+    const phoneCountResult = await db.query(
+      'SELECT COUNT(*) as count FROM phone_numbers WHERE user_id = $1 AND status = $2',
+      [req.user.userId, 'active']
+    );
+
+    const user = userResult.rows[0];
+    const phoneCount = parseInt(phoneCountResult.rows[0].count);
+
+    res.json({
+      ...user,
+      phoneCount,
+      planLimits: req.planLimits,
+      remainingNumbers: req.planLimits.phone_numbers - phoneCount
+    });
+  } catch (error) {
+    console.error('Profile error:', error);
+    res.status(500).json({ error: 'Failed to retrieve profile' });
+  }
 });
 
 // Phone number search
@@ -524,6 +632,40 @@ app.get('/api/phone/search', authenticateToken, async (req, res) => {
   try {
     const { areaCode } = req.query;
 
+    if (!areaCode) {
+      return res.status(400).json({ error: 'Area code is required' });
+    }
+
+    // Check user's plan limits
+    const userResult = await db.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
+    const userPlan = userResult.rows[0]?.plan || 'basic';
+
+    // Get current phone number count for user
+    const numberCountResult = await db.query(
+      'SELECT COUNT(*) as count FROM phone_numbers WHERE user_id = $1 AND status = $2',
+      [req.user.userId, 'active']
+    );
+    const currentNumbers = parseInt(numberCountResult.rows[0].count);
+
+    // Check plan limits
+    const planLimits = {
+      'basic': { phone_numbers: 1 },
+      'professional': { phone_numbers: 3 },
+      'enterprise': { phone_numbers: 10 }
+    };
+
+    const limit = planLimits[userPlan]?.phone_numbers || 1;
+    
+    if (currentNumbers >= limit) {
+      return res.status(403).json({ 
+        error: `Plan limit reached. ${userPlan} plan allows ${limit} phone number(s). Upgrade to get more numbers.`,
+        currentNumbers,
+        limit,
+        plan: userPlan
+      });
+    }
+
+    // Search for available numbers via Twilio
     const numbers = await twilio.availablePhoneNumbers('US')
       .local
       .list({
@@ -536,17 +678,24 @@ app.get('/api/phone/search', authenticateToken, async (req, res) => {
       friendlyName: number.friendlyName,
       locality: number.locality,
       region: number.region,
-      capabilities: number.capabilities
+      capabilities: number.capabilities,
+      cost: 3.99 // Standard cost for 30 days
     }));
 
-    res.json({ numbers: formattedNumbers });
+    res.json({ 
+      numbers: formattedNumbers,
+      userPlan,
+      currentNumbers,
+      limit,
+      remainingSlots: limit - currentNumbers
+    });
   } catch (error) {
     console.error('Phone search error:', error);
     res.status(500).json({ error: 'Failed to search phone numbers' });
   }
 });
 
-// Purchase phone number
+// Purchase phone number with plan limits
 app.post('/api/phone/purchase', authenticateToken, async (req, res) => {
   try {
     const { phoneNumber } = req.body;
@@ -555,11 +704,35 @@ app.post('/api/phone/purchase', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Phone number is required' });
     }
 
+    // Check user's plan and current usage
+    const userResult = await db.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
+    const userPlan = userResult.rows[0]?.plan || 'basic';
+
+    const numberCountResult = await db.query(
+      'SELECT COUNT(*) as count FROM phone_numbers WHERE user_id = $1 AND status = $2',
+      [req.user.userId, 'active']
+    );
+    const currentNumbers = parseInt(numberCountResult.rows[0].count);
+
+    const planLimits = {
+      'basic': { phone_numbers: 1 },
+      'professional': { phone_numbers: 3 },
+      'enterprise': { phone_numbers: 10 }
+    };
+
+    const limit = planLimits[userPlan]?.phone_numbers || 1;
+
+    if (currentNumbers >= limit) {
+      return res.status(403).json({ 
+        error: `Plan limit reached. ${userPlan} plan allows ${limit} phone number(s). Upgrade to get more numbers.`
+      });
+    }
+
     // Purchase number from Twilio
     const incomingPhoneNumber = await twilio.incomingPhoneNumbers.create({
       phoneNumber: phoneNumber,
-      voiceUrl: `${process.env.BASE_URL}/api/twilio/voice`,
-      smsUrl: `${process.env.BASE_URL}/api/twilio/sms`
+      voiceUrl: `${process.env.BASE_URL || 'https://switchline-backend.onrender.com'}/api/twilio/voice`,
+      smsUrl: `${process.env.BASE_URL || 'https://switchline-backend.onrender.com'}/api/twilio/sms`
     });
 
     // Store in database
@@ -577,7 +750,9 @@ app.post('/api/phone/purchase', authenticateToken, async (req, res) => {
     res.json({
       message: 'Phone number purchased successfully',
       phoneNumber: phoneNumber,
-      sid: incomingPhoneNumber.sid
+      sid: incomingPhoneNumber.sid,
+      currentNumbers: currentNumbers + 1,
+      limit: limit
     });
   } catch (error) {
     console.error('Phone purchase error:', error);
