@@ -64,7 +64,7 @@ async function setupDatabase() {
 
     // Add missing columns to users table
     const columnsToAdd = [
-      { name: 'password', type: 'VARCHAR(255)' },
+      { name: 'password_hash', type: 'VARCHAR(255)' }, // Use password_hash instead of password
       { name: 'plan', type: 'VARCHAR(50) DEFAULT \'basic\'' },
       { name: 'credits', type: 'INTEGER DEFAULT 0' },
       { name: 'status', type: 'VARCHAR(50) DEFAULT \'active\'' },
@@ -135,16 +135,16 @@ async function setupDatabase() {
     
     if (existingUser.rows.length === 0) {
       const result = await db.query(`
-        INSERT INTO users (email, password, plan, credits, status) 
+        INSERT INTO users (email, password_hash, plan, credits, status) 
         VALUES ($1, $2, $3, $4, $5) 
         RETURNING id
       `, ['test@switchline.com', hashedPassword, 'pro', 50, 'active']);
       console.log('Test user created successfully');
     } else {
-      // Update existing user to ensure it has a password
+      // Update existing user to ensure it has a password_hash
       await db.query(`
         UPDATE users 
-        SET password = $1, plan = $2, credits = $3, status = $4 
+        SET password_hash = $1, plan = $2, credits = $3, status = $4 
         WHERE email = $5
       `, [hashedPassword, 'pro', 50, 'active', 'test@switchline.com']);
       console.log('Test user updated successfully');
@@ -222,7 +222,7 @@ app.post('/api/auth/login', async (req, res) => {
     const user = result.rows[0];
 
     // Check password
-    const isValidPassword = await bcrypt.compare(password, user.password);
+    const isValidPassword = await bcrypt.compare(password, user.password_hash);
     
     if (!isValidPassword) {
       await logSecurityEvent(user.id, 'LOGIN_FAILED', 'Invalid password', req);
@@ -274,7 +274,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Create user
     const result = await db.query(
-      'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id, email, plan, credits, status',
+      'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, plan, credits, status',
       [email, hashedPassword]
     );
 
