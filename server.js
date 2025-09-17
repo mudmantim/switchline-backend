@@ -254,6 +254,46 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// Add this endpoint to your existing server.js file
+// Place it anywhere with your other app.post() endpoints
+
+app.post('/api/numbers/purchase', async (req, res) => {
+  try {
+    console.log('Purchase request received:', req.body);
+    const { phoneNumber } = req.body;
+    
+    if (!phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        error: 'Phone number is required'
+      });
+    }
+    
+    console.log('Attempting to purchase number:', phoneNumber);
+    
+    // Purchase the number through Twilio
+    const purchasedNumber = await client.incomingPhoneNumbers.create({
+      phoneNumber: phoneNumber
+    });
+    
+    console.log('Number purchased successfully:', purchasedNumber.phoneNumber);
+    
+    res.json({
+      success: true,
+      phoneNumber: purchasedNumber.phoneNumber,
+      sid: purchasedNumber.sid,
+      friendlyName: purchasedNumber.friendlyName
+    });
+    
+  } catch (error) {
+    console.error('Purchase failed:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password } = req.body;
