@@ -150,18 +150,6 @@ async function setupDatabase() {
       console.log('Test user updated successfully');
     }
 
-    // Create user_area_code_searches table for personalized quick select
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS user_area_code_searches (
-        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        user_id UUID REFERENCES users(id),
-        area_code VARCHAR(3) NOT NULL,
-        search_count INTEGER DEFAULT 1,
-        last_searched TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(user_id, area_code)
-      )
-    `);
-
     console.log('✅ Database setup complete');
   } catch (error) {
     console.error('❌ Database setup error:', error);
@@ -611,38 +599,8 @@ app.get('/api/phone/list', authenticateToken, async (req, res) => {
   }
 });
 
-// Get user's frequently used area codes for personalized quick select
-app.get('/api/user/favorite-area-codes', authenticateToken, async (req, res) => {
-  try {
-    const result = await db.query(`
-      SELECT area_code, search_count, last_searched 
-      FROM user_area_code_searches 
-      WHERE user_id = $1 
-      ORDER BY search_count DESC, last_searched DESC 
-      LIMIT 9
-    `, [req.user.userId]);
-
-    // If user has fewer than 6 searches, fill with popular defaults
-    const userCodes = result.rows.map(row => row.area_code);
-    const defaultCodes = ['212', '310', '404', '713', '214', '305', '646', '917', '415'];
-    
-    // Combine user codes with defaults, removing duplicates
-    const combinedCodes = [...userCodes];
-    for (const code of defaultCodes) {
-      if (!combinedCodes.includes(code) && combinedCodes.length < 9) {
-        combinedCodes.push(code);
-      }
-    }
-
-    res.json({ 
-      areaCodes: combinedCodes.slice(0, 9),
-      userSearchCount: result.rows.length 
-    });
-  } catch (error) {
-    console.error('Favorite area codes error:', error);
-    res.status(500).json({ error: 'Failed to retrieve favorite area codes' });
-  }
-});
+// Get user profile with plan info
+app.get('/api/user/profile', authenticateToken, checkPlanLimits, async (req, res) => {
   try {
     const userResult = await db.query(
       'SELECT email, plan, credits, status FROM users WHERE id = $1',
@@ -669,7 +627,7 @@ app.get('/api/user/favorite-area-codes', authenticateToken, async (req, res) => 
   }
 });
 
-// Phone number search with area code tracking
+// Phone number search
 app.get('/api/phone/search', authenticateToken, async (req, res) => {
   try {
     const { areaCode } = req.query;
@@ -677,16 +635,6 @@ app.get('/api/phone/search', authenticateToken, async (req, res) => {
     if (!areaCode) {
       return res.status(400).json({ error: 'Area code is required' });
     }
-
-    // Track area code usage for this user
-    await db.query(`
-      INSERT INTO user_area_code_searches (user_id, area_code, search_count, last_searched) 
-      VALUES ($1, $2, 1, NOW()) 
-      ON CONFLICT (user_id, area_code) 
-      DO UPDATE SET 
-        search_count = user_area_code_searches.search_count + 1,
-        last_searched = NOW()
-    `, [req.user.userId, areaCode]);
 
     // Check user's plan limits
     const userResult = await db.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
