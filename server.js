@@ -43,23 +43,48 @@ async function setupDatabase() {
     // First, enable UUID extension
     await db.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
 
-    // Create users table with UUID primary key
+    // Check if users table exists and add missing columns
+    const usersTableCheck = await db.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND table_schema = 'public'
+    `);
+
+    const existingColumns = usersTableCheck.rows.map(row => row.column_name);
+    console.log('Existing users table columns:', existingColumns);
+
+    // Create users table if it doesn't exist
     await db.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        plan VARCHAR(50) DEFAULT 'basic',
-        credits INTEGER DEFAULT 0,
-        status VARCHAR(50) DEFAULT 'active',
-        stripe_customer_id VARCHAR(255),
-        subscription_id VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
-    // Create security_events table with UUID foreign key
+    // Add missing columns to users table
+    const columnsToAdd = [
+      { name: 'password', type: 'VARCHAR(255)' },
+      { name: 'plan', type: 'VARCHAR(50) DEFAULT \'basic\'' },
+      { name: 'credits', type: 'INTEGER DEFAULT 0' },
+      { name: 'status', type: 'VARCHAR(50) DEFAULT \'active\'' },
+      { name: 'stripe_customer_id', type: 'VARCHAR(255)' },
+      { name: 'subscription_id', type: 'VARCHAR(255)' },
+      { name: 'updated_at', type: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' }
+    ];
+
+    for (const column of columnsToAdd) {
+      if (!existingColumns.includes(column.name)) {
+        try {
+          await db.query(`ALTER TABLE users ADD COLUMN ${column.name} ${column.type}`);
+          console.log(`Added column: ${column.name}`);
+        } catch (error) {
+          console.log(`Column ${column.name} might already exist:`, error.message);
+        }
+      }
+    }
+
+    // Create security_events table
     await db.query(`
       CREATE TABLE IF NOT EXISTS security_events (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -72,7 +97,7 @@ async function setupDatabase() {
       )
     `);
 
-    // Create phone_numbers table with UUID foreign key
+    // Create phone_numbers table
     await db.query(`
       CREATE TABLE IF NOT EXISTS phone_numbers (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -86,7 +111,7 @@ async function setupDatabase() {
       )
     `);
 
-    // Create messages table with UUID foreign keys
+    // Create messages table
     await db.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -105,17 +130,24 @@ async function setupDatabase() {
     // Create test user if it doesn't exist
     const hashedPassword = await bcrypt.hash('test123', 10);
     
-    const result = await db.query(`
-      INSERT INTO users (email, password, plan, credits, status) 
-      VALUES ($1, $2, $3, $4, $5) 
-      ON CONFLICT (email) DO NOTHING
-      RETURNING id
-    `, ['test@switchline.com', hashedPassword, 'pro', 50, 'active']);
-
-    if (result.rows.length > 0) {
+    // Check if test user exists first
+    const existingUser = await db.query(`SELECT id FROM users WHERE email = $1`, ['test@switchline.com']);
+    
+    if (existingUser.rows.length === 0) {
+      const result = await db.query(`
+        INSERT INTO users (email, password, plan, credits, status) 
+        VALUES ($1, $2, $3, $4, $5) 
+        RETURNING id
+      `, ['test@switchline.com', hashedPassword, 'pro', 50, 'active']);
       console.log('Test user created successfully');
     } else {
-      console.log('Test user already exists');
+      // Update existing user to ensure it has a password
+      await db.query(`
+        UPDATE users 
+        SET password = $1, plan = $2, credits = $3, status = $4 
+        WHERE email = $5
+      `, [hashedPassword, 'pro', 50, 'active', 'test@switchline.com']);
+      console.log('Test user updated successfully');
     }
 
     console.log('✅ Database setup complete');
