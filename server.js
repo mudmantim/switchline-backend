@@ -211,6 +211,51 @@ app.get('/health', async (req, res) => {
 });
 
 // =============================================================================
+// API TEST ENDPOINTS
+// =============================================================================
+
+// Twilio test endpoint for frontend API testing
+app.get('/api/twilio/test', async (req, res) => {
+  try {
+    // Check if Twilio is configured
+    if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+      return res.status(500).json({
+        success: false,
+        error: 'Twilio not configured'
+      });
+    }
+
+    // Test Twilio connection
+    let twilioStatus = 'disconnected';
+    try {
+      await twilioClient.api.accounts(process.env.TWILIO_ACCOUNT_SID).fetch();
+      twilioStatus = 'connected';
+    } catch (twilioError) {
+      console.error('Twilio test error:', twilioError);
+      return res.status(500).json({
+        success: false,
+        error: 'Twilio connection failed'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Twilio integration ready',
+      timestamp: new Date().toISOString(),
+      configured: true,
+      status: twilioStatus
+    });
+
+  } catch (error) {
+    console.error('Twilio test endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Twilio test failed'
+    });
+  }
+});
+
+// =============================================================================
 // AUTHENTICATION ROUTES
 // =============================================================================
 
@@ -247,37 +292,16 @@ app.post('/api/auth/register', async (req, res) => {
     // Hash password
     const saltRounds = 12;
     const passwordHash = await bcrypt.hash(password, saltRounds);
-    const salt = await bcrypt.genSalt(saltRounds);
 
     // Create user
     const userResult = await pool.query(
-      `INSERT INTO users (email, password_hash, salt, first_name, last_name, status, email_verified)
-       VALUES ($1, $2, $3, $4, $5, 'pending_verification', false)
+      `INSERT INTO users (email, password_hash, first_name, last_name, is_active, email_verified)
+       VALUES ($1, $2, $3, $4, true, false)
        RETURNING id, email, first_name, last_name, created_at`,
-      [email.toLowerCase(), passwordHash, salt, firstName, lastName]
+      [email.toLowerCase(), passwordHash, firstName, lastName]
     );
 
     const user = userResult.rows[0];
-
-    // Get basic plan
-    const planResult = await pool.query(
-      "SELECT id FROM subscription_plans WHERE name = 'Basic' AND active = true LIMIT 1"
-    );
-
-    if (planResult.rows.length > 0) {
-      // Create trial subscription
-      await pool.query(
-        `INSERT INTO user_subscriptions (user_id, plan_id, status, current_period_start, current_period_end)
-         VALUES ($1, $2, 'trialing', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '7 days')`,
-        [user.id, planResult.rows[0].id]
-      );
-    }
-
-    // Create notification preferences
-    await pool.query(
-      'INSERT INTO notification_preferences (user_id) VALUES ($1)',
-      [user.id]
-    );
 
     // Generate JWT token
     const token = jwt.sign(
@@ -319,7 +343,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     // Get user
     const userResult = await pool.query(
-      'SELECT id, email, password_hash, status, failed_login_attempts, account_locked_until FROM users WHERE email = $1',
+      'SELECT id, email, password_hash, is_active FROM users WHERE email = $1',
       [email.toLowerCase()]
     );
 
@@ -330,14 +354,8 @@ app.post('/api/auth/login', async (req, res) => {
 
     const user = userResult.rows[0];
 
-    // Check if account is locked
-    if (user.account_locked_until && new Date() < new Date(user.account_locked_until)) {
-      await logSecurityEvent(user.id, 'login_blocked', 'Login attempt on locked account', 'warning', req);
-      return res.status(423).json({ error: 'Account temporarily locked due to failed login attempts' });
-    }
-
     // Check if account is active
-    if (user.status !== 'active') {
+    if (!user.is_active) {
       await logSecurityEvent(user.id, 'login_blocked', 'Login attempt on inactive account', 'warning', req);
       return res.status(401).json({ error: 'Account not active' });
     }
@@ -346,26 +364,13 @@ app.post('/api/auth/login', async (req, res) => {
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
 
     if (!isValidPassword) {
-      // Increment failed login attempts
-      const newFailedAttempts = (user.failed_login_attempts || 0) + 1;
-      let lockUntil = null;
-
-      if (newFailedAttempts >= 5) {
-        lockUntil = new Date(Date.now() + 30 * 60 * 1000); // Lock for 30 minutes
-      }
-
-      await pool.query(
-        'UPDATE users SET failed_login_attempts = $1, account_locked_until = $2 WHERE id = $3',
-        [newFailedAttempts, lockUntil, user.id]
-      );
-
-      await logSecurityEvent(user.id, 'login_failure', `Failed login attempt (${newFailedAttempts}/5)`, 'warning', req);
+      await logSecurityEvent(user.id, 'login_failure', 'Failed login attempt', 'warning', req);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Reset failed login attempts on successful login
+    // Update last login
     await pool.query(
-      'UPDATE users SET failed_login_attempts = 0, account_locked_until = NULL, last_login_at = CURRENT_TIMESTAMP WHERE id = $1',
+      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
       [user.id]
     );
 
@@ -403,16 +408,13 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/user/profile', authenticateToken, async (req, res) => {
   try {
     const userResult = await pool.query(
-      `SELECT u.id, u.email, u.first_name, u.last_name, u.timezone, u.status, u.email_verified,
-              u.two_factor_enabled, u.created_at, u.last_login_at,
-              s.status as subscription_status, sp.name as plan_name, sp.max_phone_numbers,
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.is_active, u.email_verified,
+              u.created_at, u.last_login,
               COUNT(pn.id) as phone_numbers_count
        FROM users u
-       LEFT JOIN user_subscriptions s ON u.id = s.user_id AND s.status IN ('active', 'trialing')
-       LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
        LEFT JOIN phone_numbers pn ON u.id = pn.user_id AND pn.status = 'active'
        WHERE u.id = $1
-       GROUP BY u.id, s.status, sp.name, sp.max_phone_numbers`,
+       GROUP BY u.id`,
       [req.user.id]
     );
 
@@ -428,18 +430,11 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
         email: user.email,
         firstName: user.first_name,
         lastName: user.last_name,
-        timezone: user.timezone,
-        status: user.status,
+        isActive: user.is_active,
         emailVerified: user.email_verified,
-        twoFactorEnabled: user.two_factor_enabled,
         createdAt: user.created_at,
-        lastLoginAt: user.last_login_at,
-        subscription: {
-          status: user.subscription_status,
-          planName: user.plan_name,
-          maxPhoneNumbers: user.max_phone_numbers,
-          phoneNumbersUsed: parseInt(user.phone_numbers_count)
-        }
+        lastLogin: user.last_login,
+        phoneNumbersCount: parseInt(user.phone_numbers_count)
       }
     });
 
@@ -502,32 +497,11 @@ app.post('/api/numbers/purchase', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Phone number is required' });
     }
 
-    // Check subscription limits
-    const subscriptionResult = await client.query(
-      `SELECT sp.max_phone_numbers, COUNT(pn.id) as current_numbers
-       FROM user_subscriptions s
-       JOIN subscription_plans sp ON s.plan_id = sp.id
-       LEFT JOIN phone_numbers pn ON s.user_id = pn.user_id AND pn.status = 'active'
-       WHERE s.user_id = $1 AND s.status IN ('active', 'trialing')
-       GROUP BY sp.max_phone_numbers`,
-      [req.user.id]
-    );
-
-    if (subscriptionResult.rows.length === 0) {
-      return res.status(403).json({ error: 'No active subscription found' });
-    }
-
-    const { max_phone_numbers, current_numbers } = subscriptionResult.rows[0];
-
-    if (current_numbers >= max_phone_numbers) {
-      return res.status(403).json({ error: 'Phone number limit reached for your plan' });
-    }
-
     // Purchase number from Twilio
     const twilioNumber = await twilioClient.incomingPhoneNumbers.create({
       phoneNumber: phoneNumber,
-      voiceUrl: `${process.env.BASE_URL}/api/webhooks/twilio/voice`,
-      smsUrl: `${process.env.BASE_URL}/api/webhooks/twilio/sms`,
+      voiceUrl: `${process.env.BACKEND_ROOT}/api/webhooks/twilio/voice`,
+      smsUrl: `${process.env.BACKEND_ROOT}/api/webhooks/twilio/sms`,
       voiceMethod: 'POST',
       smsMethod: 'POST'
     });
@@ -570,10 +544,6 @@ app.post('/api/numbers/purchase', authenticateToken, async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Number purchase error:', error);
-    
-    // If Twilio purchase succeeded but database insert failed, we should release the number
-    // This is a complex scenario that would need proper error handling in production
-    
     res.status(500).json({ error: 'Failed to purchase phone number' });
   } finally {
     client.release();
@@ -654,12 +624,6 @@ app.delete('/api/numbers/:numberId', authenticateToken, async (req, res) => {
       ['burned', numberId]
     );
 
-    // Optionally delete associated messages/calls or mark them as burned
-    await client.query(
-      'UPDATE messages SET burned = true WHERE phone_number_id = $1',
-      [numberId]
-    );
-
     await client.query('COMMIT');
 
     await logSecurityEvent(req.user.id, 'number_burned', `Burned phone number ${number.phone_number}`, 'info', req);
@@ -711,11 +675,11 @@ app.post('/api/messages/send', authenticateToken, async (req, res) => {
     // Store in database
     const result = await pool.query(
       `INSERT INTO messages (
-        user_id, phone_number_id, from_number, to_number, message_body, 
-        direction, twilio_message_sid, status
-       ) VALUES ($1, $2, $3, $4, $5, 'outbound', $6, $7)
+        user_id, phone_number_id, from_number, to_number, body, 
+        direction, twilio_sid, sent_at
+       ) VALUES ($1, $2, $3, $4, $5, 'outbound', $6, CURRENT_TIMESTAMP)
        RETURNING id, created_at`,
-      [req.user.id, fromNumberId, fromNumber, formattedToNumber, messageBody, message.sid, message.status]
+      [req.user.id, fromNumberId, fromNumber, formattedToNumber, messageBody, message.sid]
     );
 
     res.status(201).json({
@@ -749,10 +713,10 @@ app.get('/api/messages/:numberId', authenticateToken, async (req, res) => {
 
     // Get messages
     const result = await pool.query(
-      `SELECT id, from_number, to_number, message_body, direction, status,
+      `SELECT id, from_number, to_number, body, direction,
               sent_at, delivered_at, created_at
        FROM messages 
-       WHERE phone_number_id = $1 AND burned = false
+       WHERE phone_number_id = $1
        ORDER BY created_at DESC
        LIMIT $2 OFFSET $3`,
       [numberId, limit, offset]
@@ -793,10 +757,10 @@ app.post('/api/webhooks/twilio/sms', async (req, res) => {
     // Store incoming message
     await pool.query(
       `INSERT INTO messages (
-        user_id, phone_number_id, from_number, to_number, message_body,
-        direction, twilio_message_sid, status
-       ) VALUES ($1, $2, $3, $4, $5, 'inbound', $6, $7)`,
-      [userId, phoneNumberId, From, To, Body, MessageSid, SmsStatus]
+        user_id, phone_number_id, from_number, to_number, body,
+        direction, twilio_sid, sent_at
+       ) VALUES ($1, $2, $3, $4, $5, 'inbound', $6, CURRENT_TIMESTAMP)`,
+      [userId, phoneNumberId, From, To, Body, MessageSid]
     );
 
     // Update phone number usage stats
@@ -835,7 +799,7 @@ app.post('/api/webhooks/twilio/voice', async (req, res) => {
     await pool.query(
       `INSERT INTO calls (
         user_id, phone_number_id, from_number, to_number, direction,
-        twilio_call_sid, status, started_at
+        twilio_sid, status, started_at
        ) VALUES ($1, $2, $3, $4, 'inbound', $5, $6, CURRENT_TIMESTAMP)`,
       [userId, phoneNumberId, From, To, CallSid, CallStatus]
     );
