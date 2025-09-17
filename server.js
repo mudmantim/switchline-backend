@@ -40,10 +40,13 @@ db.connect((err, client, release) => {
 // Database setup function
 async function setupDatabase() {
   try {
-    // Create users table
+    // First, enable UUID extension
+    await db.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+
+    // Create users table with UUID primary key
     await db.query(`
       CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         email VARCHAR(255) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
         plan VARCHAR(50) DEFAULT 'basic',
@@ -56,11 +59,11 @@ async function setupDatabase() {
       )
     `);
 
-    // Create security_events table
+    // Create security_events table with UUID foreign key
     await db.query(`
       CREATE TABLE IF NOT EXISTS security_events (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id),
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES users(id),
         event_type VARCHAR(100),
         details TEXT,
         ip_address VARCHAR(45),
@@ -69,11 +72,11 @@ async function setupDatabase() {
       )
     `);
 
-    // Create phone_numbers table
+    // Create phone_numbers table with UUID foreign key
     await db.query(`
       CREATE TABLE IF NOT EXISTS phone_numbers (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id),
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES users(id),
         phone_number VARCHAR(20) NOT NULL,
         twilio_sid VARCHAR(255),
         area_code VARCHAR(10),
@@ -83,12 +86,12 @@ async function setupDatabase() {
       )
     `);
 
-    // Create messages table
+    // Create messages table with UUID foreign keys
     await db.query(`
       CREATE TABLE IF NOT EXISTS messages (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id),
-        phone_number_id INTEGER REFERENCES phone_numbers(id),
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES users(id),
+        phone_number_id UUID REFERENCES phone_numbers(id),
         from_number VARCHAR(20),
         to_number VARCHAR(20),
         message_body TEXT,
