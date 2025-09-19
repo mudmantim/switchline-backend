@@ -1,885 +1,744 @@
 const express = require('express');
 const cors = require('cors');
-const bcrypt = require('bcrypt');
+const twilio = require('twilio');
+const stripe = require('stripe');
 const jwt = require('jsonwebtoken');
-const { Pool } = require('pg');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const twilio = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-require('dotenv').config();
+const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
-const PORT = process.env.PORT || 10000;
 
-// Middleware
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Database connection
-const db = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
-
-// Test database connection
-db.connect((err, client, release) => {
-  if (err) {
-    console.error('Error connecting to database:', err);
-  } else {
-    console.log('Database: Connected');
-    release();
-  }
-});
-
-// Database setup function
-async function setupDatabase() {
-  try {
-    // First, enable UUID extension
-    await db.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
-
-    // Check if users table exists and add missing columns
-    const usersTableCheck = await db.query(`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'users' AND table_schema = 'public'
-    `);
-
-    const existingColumns = usersTableCheck.rows.map(row => row.column_name);
-    console.log('Existing users table columns:', existingColumns);
-
-    // Create users table if it doesn't exist
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        email VARCHAR(255) UNIQUE NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Add missing columns to users table
-    const columnsToAdd = [
-      { name: 'password_hash', type: 'VARCHAR(255)' }, // Use password_hash instead of password
-      { name: 'plan', type: 'VARCHAR(50) DEFAULT \'basic\'' },
-      { name: 'credits', type: 'INTEGER DEFAULT 0' },
-      { name: 'status', type: 'VARCHAR(50) DEFAULT \'active\'' },
-      { name: 'stripe_customer_id', type: 'VARCHAR(255)' },
-      { name: 'subscription_id', type: 'VARCHAR(255)' },
-      { name: 'updated_at', type: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' }
-    ];
-
-    for (const column of columnsToAdd) {
-      if (!existingColumns.includes(column.name)) {
-        try {
-          await db.query(`ALTER TABLE users ADD COLUMN ${column.name} ${column.type}`);
-          console.log(`Added column: ${column.name}`);
-        } catch (error) {
-          console.log(`Column ${column.name} might already exist:`, error.message);
-        }
-      }
-    }
-
-    // Create security_events table
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS security_events (
-        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        user_id UUID REFERENCES users(id),
-        event_type VARCHAR(100),
-        details TEXT,
-        ip_address VARCHAR(45),
-        user_agent TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create phone_numbers table
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS phone_numbers (
-        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        user_id UUID REFERENCES users(id),
-        phone_number VARCHAR(20) NOT NULL,
-        twilio_sid VARCHAR(255),
-        area_code VARCHAR(10),
-        location VARCHAR(100),
-        status VARCHAR(50) DEFAULT 'active',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create messages table
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS messages (
-        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        user_id UUID REFERENCES users(id),
-        phone_number_id UUID REFERENCES phone_numbers(id),
-        from_number VARCHAR(20),
-        to_number VARCHAR(20),
-        message_body TEXT,
-        direction VARCHAR(20),
-        twilio_sid VARCHAR(255),
-        status VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create test user if it doesn't exist
-    const hashedPassword = await bcrypt.hash('test123', 10);
+// Environment Configuration
+const CONFIG = {
+    PORT: process.env.PORT || 3001,
+    NODE_ENV: process.env.NODE_ENV || 'development',
     
-    // Check if test user exists first
-    const existingUser = await db.query(`SELECT id FROM users WHERE email = $1`, ['test@switchline.com']);
+    // Database (In production, use actual database)
+    JWT_SECRET: process.env.JWT_SECRET || 'switchline-super-secret-key-change-in-production',
     
-    if (existingUser.rows.length === 0) {
-      const result = await db.query(`
-        INSERT INTO users (email, password_hash, plan, credits, status) 
-        VALUES ($1, $2, $3, $4, $5) 
-        RETURNING id
-      `, ['test@switchline.com', hashedPassword, 'pro', 50, 'active']);
-      console.log('Test user created successfully');
-    } else {
-      // Update existing user to ensure it has a password_hash
-      await db.query(`
-        UPDATE users 
-        SET password_hash = $1, plan = $2, credits = $3, status = $4 
-        WHERE email = $5
-      `, [hashedPassword, 'pro', 50, 'active', 'test@switchline.com']);
-      console.log('Test user updated successfully');
-    }
-
-    console.log('✅ Database setup complete');
-  } catch (error) {
-    console.error('❌ Database setup error:', error);
-  }
-}
-
-// Auth middleware
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key', (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid token' });
-    }
-    req.user = user;
-    next();
-  });
+    // Twilio Configuration
+    TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID || 'your_twilio_account_sid',
+    TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN || 'your_twilio_auth_token',
+    
+    // Stripe Configuration
+    STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || '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',
+    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
+    
+    // Frontend URLs
+    FRONTEND_URLS: [
+        'https://switchline.app',
+        'https://www.switchline.app',
+        'http://localhost:3000',
+        'http://localhost:8080',
+        'http://127.0.0.1:3000'
+    ]
 };
 
-// Security event logging
-async function logSecurityEvent(userId, eventType, details, req) {
-  try {
-    await db.query(
-      'INSERT INTO security_events (user_id, event_type, details, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5)',
-      [userId, eventType, details, req.ip, req.headers['user-agent']]
-    );
-  } catch (error) {
-    console.error('Failed to log security event:', error);
-  }
+// Initialize Services
+const twilioClient = twilio(CONFIG.TWILIO_ACCOUNT_SID, CONFIG.TWILIO_AUTH_TOKEN);
+const stripeClient = stripe(CONFIG.STRIPE_SECRET_KEY);
+
+// In-memory storage (Replace with actual database in production)
+const users = new Map();
+const userNumbers = new Map();
+const userSessions = new Map();
+
+// Rate Limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: { success: false, message: 'Too many requests, please try again later.' }
+});
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // limit each IP to 5 auth attempts per windowMs
+    message: { success: false, message: 'Too many authentication attempts, please try again later.' }
+});
+
+// Middleware
+app.use(limiter);
+app.use(cors({
+    origin: CONFIG.FRONTEND_URLS,
+    credentials: true,
+    optionsSuccessStatus: 200
+}));
+
+// Raw body for Stripe webhooks
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+
+// JSON parsing for other routes
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// Request logging
+app.use((req, res, next) => {
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] ${req.method} ${req.path} - ${req.ip}`);
+    next();
+});
+
+// Authentication middleware
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ success: false, message: 'Access token required' });
+    }
+
+    jwt.verify(token, CONFIG.JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.status(403).json({ success: false, message: 'Invalid or expired token' });
+        }
+        req.user = user;
+        next();
+    });
 }
 
-// Routes
+// Utility Functions
+function generateUserId() {
+    return 'user_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+}
+
+function generateToken(user) {
+    return jwt.sign(
+        { userId: user.id, email: user.email },
+        CONFIG.JWT_SECRET,
+        { expiresIn: '7d' }
+    );
+}
+
+function validateEmail(email) {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
+}
+
+function validatePhoneNumber(phoneNumber) {
+    const re = /^\+1\d{10}$/;
+    return re.test(phoneNumber);
+}
+
+// Root endpoint
+app.get('/', (req, res) => {
+    res.json({
+        success: true,
+        service: 'Switchline Backend API',
+        version: '2.1.0',
+        environment: CONFIG.NODE_ENV,
+        timestamp: new Date().toISOString(),
+        features: [
+            'User Authentication',
+            'Stripe Payment Integration',
+            'Twilio Phone Services',
+            'Phone Number Management',
+            'Secure Communication'
+        ],
+        endpoints: {
+            auth: '/api/auth/*',
+            twilio: '/api/twilio/*',
+            stripe: '/api/stripe/*',
+            user: '/api/user/*'
+        },
+        contact: 'admin@switchline.app'
+    });
+});
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// Root route
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Switchline API Server', 
-    version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
-
-// Auth Routes
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    // Find user
-    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    
-    if (result.rows.length === 0) {
-      await logSecurityEvent(null, 'LOGIN_FAILED', `Failed login attempt for ${email}`, req);
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const user = result.rows[0];
-
-    // Check password
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    
-    if (!isValidPassword) {
-      await logSecurityEvent(user.id, 'LOGIN_FAILED', 'Invalid password', req);
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    // Create JWT token
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '7d' }
-    );
-
-    await logSecurityEvent(user.id, 'LOGIN_SUCCESS', 'Successful login', req);
-
     res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        plan: user.plan,
-        credits: user.credits,
-        status: user.status
-      }
+        success: true,
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
     });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed' });
-  }
 });
 
-// Add this endpoint to your existing server.js file
-// Place it anywhere with your other app.post() endpoints
+// AUTHENTICATION ROUTES
 
-app.post('/api/numbers/purchase', async (req, res) => {
-  try {
-    console.log('Purchase request received:', req.body);
-    const { phoneNumber } = req.body;
-    
-    if (!phoneNumber) {
-      return res.status(400).json({
-        success: false,
-        error: 'Phone number is required'
-      });
+// User Registration
+app.post('/api/auth/signup', authLimiter, async (req, res) => {
+    try {
+        const { name, email, password } = req.body;
+
+        // Validation
+        if (!name || !email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Name, email, and password are required'
+            });
+        }
+
+        if (!validateEmail(email)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email format'
+            });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password must be at least 6 characters long'
+            });
+        }
+
+        // Check if user already exists
+        for (let [id, user] of users) {
+            if (user.email === email) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'User with this email already exists'
+                });
+            }
+        }
+
+        // Create user
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const userId = generateUserId();
+        
+        const newUser = {
+            id: userId,
+            name: name.trim(),
+            email: email.toLowerCase().trim(),
+            password: hashedPassword,
+            createdAt: new Date().toISOString(),
+            isActive: true
+        };
+
+        users.set(userId, newUser);
+        userNumbers.set(userId, []);
+
+        // Generate token
+        const token = generateToken(newUser);
+
+        // User object without password
+        const userResponse = {
+            id: newUser.id,
+            name: newUser.name,
+            email: newUser.email,
+            createdAt: newUser.createdAt
+        };
+
+        res.status(201).json({
+            success: true,
+            message: 'User created successfully',
+            user: userResponse,
+            token: token
+        });
+
+        console.log(`New user registered: ${email}`);
+
+    } catch (error) {
+        console.error('Signup error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error during signup'
+        });
     }
-    
-    console.log('Attempting to purchase number:', phoneNumber);
-    
-    // Purchase the number through Twilio
-    const purchasedNumber = await client.incomingPhoneNumbers.create({
-      phoneNumber: phoneNumber
-    });
-    
-    console.log('Number purchased successfully:', purchasedNumber.phoneNumber);
-    
-    res.json({
-      success: true,
-      phoneNumber: purchasedNumber.phoneNumber,
-      sid: purchasedNumber.sid,
-      friendlyName: purchasedNumber.friendlyName
-    });
-    
-  } catch (error) {
-    console.error('Purchase failed:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
 });
 
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { email, password } = req.body;
+// User Login
+app.post('/api/auth/login', authLimiter, async (req, res) => {
+    try {
+        const { email, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and password are required'
+            });
+        }
+
+        // Find user
+        let foundUser = null;
+        for (let [id, user] of users) {
+            if (user.email === email.toLowerCase().trim()) {
+                foundUser = user;
+                break;
+            }
+        }
+
+        if (!foundUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password'
+            });
+        }
+
+        // Verify password
+        const passwordMatch = await bcrypt.compare(password, foundUser.password);
+        if (!passwordMatch) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password'
+            });
+        }
+
+        // Generate token
+        const token = generateToken(foundUser);
+
+        // User object without password
+        const userResponse = {
+            id: foundUser.id,
+            name: foundUser.name,
+            email: foundUser.email,
+            createdAt: foundUser.createdAt
+        };
+
+        res.json({
+            success: true,
+            message: 'Login successful',
+            user: userResponse,
+            token: token
+        });
+
+        console.log(`User logged in: ${email}`);
+
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error during login'
+        });
     }
+});
 
-    // Check if user exists
-    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+// TWILIO ROUTES
+
+// Test Twilio Connection
+app.get('/api/twilio/test', async (req, res) => {
+    try {
+        const account = await twilioClient.api.accounts(CONFIG.TWILIO_ACCOUNT_SID).fetch();
+        res.json({
+            success: true,
+            message: 'Twilio connection successful',
+            accountStatus: account.status,
+            accountSid: account.sid
+        });
+    } catch (error) {
+        console.error('Twilio test error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Twilio connection failed',
+            error: error.message
+        });
+    }
+});
+
+// Search Available Phone Numbers
+app.get('/api/twilio/available-numbers', authenticateToken, async (req, res) => {
+    try {
+        const { areaCode, contains, country = 'US' } = req.query;
+
+        if (!areaCode && !contains) {
+            return res.status(400).json({
+                success: false,
+                message: 'Area code or contains parameter is required'
+            });
+        }
+
+        const searchOptions = {
+            areaCode: areaCode,
+            contains: contains,
+            limit: 20
+        };
+
+        const numbers = await twilioClient.availablePhoneNumbers(country)
+            .local
+            .list(searchOptions);
+
+        const availableNumbers = numbers.map(number => ({
+            phoneNumber: number.phoneNumber,
+            friendlyName: number.friendlyName,
+            locality: number.locality,
+            region: number.region,
+            capabilities: number.capabilities
+        }));
+
+        res.json({
+            success: true,
+            numbers: availableNumbers,
+            count: availableNumbers.length
+        });
+
+    } catch (error) {
+        console.error('Available numbers error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch available numbers',
+            error: error.message
+        });
+    }
+});
+
+// Purchase Phone Number
+app.post('/api/twilio/purchase-number', authenticateToken, async (req, res) => {
+    try {
+        const { phoneNumber } = req.body;
+        const userId = req.user.userId;
+
+        if (!phoneNumber) {
+            return res.status(400).json({
+                success: false,
+                message: 'Phone number is required'
+            });
+        }
+
+        if (!validatePhoneNumber(phoneNumber)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid phone number format'
+            });
+        }
+
+        // Purchase the number from Twilio
+        const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
+            phoneNumber: phoneNumber,
+            voiceUrl: `${req.protocol}://${req.get('host')}/api/twilio/voice-webhook`,
+            smsUrl: `${req.protocol}://${req.get('host')}/api/twilio/sms-webhook`
+        });
+
+        // Add to user's numbers
+        const userNumbersList = userNumbers.get(userId) || [];
+        const numberData = {
+            phoneNumber: phoneNumber,
+            sid: purchasedNumber.sid,
+            purchaseDate: new Date().toISOString(),
+            status: 'active'
+        };
+
+        userNumbersList.push(numberData);
+        userNumbers.set(userId, userNumbersList);
+
+        res.json({
+            success: true,
+            message: 'Phone number purchased successfully',
+            number: numberData
+        });
+
+        console.log(`Number purchased: ${phoneNumber} by user ${userId}`);
+
+    } catch (error) {
+        console.error('Purchase number error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to purchase phone number',
+            error: error.message
+        });
+    }
+});
+
+// Make Phone Call
+app.post('/api/twilio/make-call', authenticateToken, async (req, res) => {
+    try {
+        const { from, to } = req.body;
+        const userId = req.user.userId;
+
+        if (!from || !to) {
+            return res.status(400).json({
+                success: false,
+                message: 'From and to numbers are required'
+            });
+        }
+
+        // Verify user owns the from number
+        const userNumbersList = userNumbers.get(userId) || [];
+        const ownedNumber = userNumbersList.find(num => num.phoneNumber === from);
+
+        if (!ownedNumber) {
+            return res.status(403).json({
+                success: false,
+                message: 'You do not own the from number'
+            });
+        }
+
+        // Make the call
+        const call = await twilioClient.calls.create({
+            from: from,
+            to: to,
+            url: `${req.protocol}://${req.get('host')}/api/twilio/voice-webhook`
+        });
+
+        res.json({
+            success: true,
+            message: 'Call initiated successfully',
+            callSid: call.sid,
+            status: call.status
+        });
+
+        console.log(`Call initiated: ${from} -> ${to} by user ${userId}`);
+
+    } catch (error) {
+        console.error('Make call error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to make call',
+            error: error.message
+        });
+    }
+});
+
+// Voice Webhook
+app.post('/api/twilio/voice-webhook', (req, res) => {
+    const twiml = new twilio.twiml.VoiceResponse();
     
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: 'User already exists' });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const result = await db.query(
-      'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, plan, credits, status',
-      [email, hashedPassword]
-    );
-
-    const user = result.rows[0];
-
-    // Create JWT token
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '7d' }
-    );
-
-    await logSecurityEvent(user.id, 'REGISTER_SUCCESS', 'Account created', req);
-
-    res.status(201).json({
-      token,
-      user
-    });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Registration failed' });
-  }
-});
-
-// Billing Routes
-app.get('/api/billing/plans', (req, res) => {
-  const plans = [
-    {
-      id: 'basic',
-      name: 'Basic',
-      price: 900, // $9.00 in cents
-      stripe_price_id: 'price_1S8LY9Lz1CB1flJ349umxvKt',
-      currency: 'usd',
-      interval: 'month',
-      features: [
-        '1 Phone Number',
-        'Unlimited Calls & SMS',
-        '30-Day Message History',
-        'Basic Privacy Protection'
-      ],
-      limits: {
-        phone_numbers: 1,
-        message_history_days: 30,
-        international_numbers: false,
-        auto_destruct: false,
-        team_management: false,
-        api_access: false
-      }
-    },
-    {
-      id: 'professional',
-      name: 'Professional', 
-      price: 1900, // $19.00 in cents
-      stripe_price_id: 'price_1S8LYxLz1CB1flJ3juF5SshM',
-      currency: 'usd',
-      interval: 'month',
-      features: [
-        '3 Phone Numbers',
-        'Auto-Destruct Messages',
-        'International Numbers',
-        'Call Analytics',
-        'Priority Support'
-      ],
-      limits: {
-        phone_numbers: 3,
-        message_history_days: 90,
-        international_numbers: true,
-        auto_destruct: true,
-        team_management: false,
-        api_access: false
-      }
-    },
-    {
-      id: 'enterprise',
-      name: 'Enterprise',
-      price: 4900, // $49.00 in cents  
-      stripe_price_id: 'price_1S8LZNLz1CB1flJ3fgcV0fGL',
-      currency: 'usd',
-      interval: 'month',
-      features: [
-        '10 Phone Numbers',
-        'Team Management',
-        'API Access',
-        'Advanced Analytics',
-        'Dedicated Support'
-      ],
-      limits: {
-        phone_numbers: 10,
-        message_history_days: 365,
-        international_numbers: true,
-        auto_destruct: true,
-        team_management: true,
-        api_access: true
-      }
-    }
-  ];
-
-  res.json({ plans });
-});
-
-app.get('/api/billing/subscription', authenticateToken, async (req, res) => {
-  try {
-    const result = await db.query(
-      'SELECT plan, credits, status, stripe_customer_id, subscription_id FROM users WHERE id = $1',
-      [req.user.userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const user = result.rows[0];
-
-    let subscription = null;
-    if (user.subscription_id) {
-      try {
-        subscription = await stripe.subscriptions.retrieve(user.subscription_id);
-      } catch (error) {
-        console.error('Error retrieving subscription:', error);
-      }
-    }
-
-    res.json({
-      plan: user.plan,
-      credits: user.credits,
-      status: user.status,
-      subscription: subscription ? {
-        id: subscription.id,
-        status: subscription.status,
-        current_period_end: subscription.current_period_end,
-        current_period_start: subscription.current_period_start
-      } : null
-    });
-  } catch (error) {
-    console.error('Billing info error:', error);
-    res.status(500).json({ error: 'Failed to retrieve billing information' });
-  }
-});
-
-app.post('/api/billing/create-payment-intent', authenticateToken, async (req, res) => {
-  try {
-    const { amount, currency = 'usd' } = req.body;
-
-    if (!amount) {
-      return res.status(400).json({ error: 'Amount is required' });
-    }
-
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amount,
-      currency: currency,
-      metadata: {
-        userId: req.user.userId.toString()
-      }
-    });
-
-    res.json({
-      client_secret: paymentIntent.client_secret,
-      payment_intent_id: paymentIntent.id
-    });
-  } catch (error) {
-    console.error('Payment intent error:', error);
-    res.status(500).json({ error: 'Failed to create payment intent' });
-  }
-});
-
-app.post('/api/billing/create-subscription', authenticateToken, async (req, res) => {
-  try {
-    const { plan_id, payment_method } = req.body;
-
-    if (!plan_id || !payment_method) {
-      return res.status(400).json({ error: 'Plan ID and payment method are required' });
-    }
-
-    // Get plan details with correct price IDs
-    const planMap = {
-      'basic': { stripe_price_id: 'price_1S8LY9Lz1CB1flJ349umxvKt', name: 'Basic' },
-      'professional': { stripe_price_id: 'price_1S8LYxLz1CB1flJ3juF5SshM', name: 'Professional' },
-      'enterprise': { stripe_price_id: 'price_1S8LZNLz1CB1flJ3fgcV0fGL', name: 'Enterprise' }
-    };
-
-    const selectedPlan = planMap[plan_id];
-    if (!selectedPlan) {
-      return res.status(400).json({ error: 'Invalid plan ID' });
-    }
-
-    // Get or create Stripe customer
-    let customer;
-    const userResult = await db.query(
-      'SELECT stripe_customer_id, email FROM users WHERE id = $1',
-      [req.user.userId]
-    );
-
-    if (userResult.rows[0].stripe_customer_id) {
-      customer = await stripe.customers.retrieve(userResult.rows[0].stripe_customer_id);
-    } else {
-      customer = await stripe.customers.create({
-        email: userResult.rows[0].email,
-        payment_method: payment_method,
-        invoice_settings: {
-          default_payment_method: payment_method,
-        },
-      });
-
-      await db.query(
-        'UPDATE users SET stripe_customer_id = $1 WHERE id = $2',
-        [customer.id, req.user.userId]
-      );
-    }
-
-    // Create subscription using the correct price ID
-    const subscription = await stripe.subscriptions.create({
-      customer: customer.id,
-      items: [{
-        price: selectedPlan.stripe_price_id
-      }],
-      payment_settings: {
-        payment_method_types: ['card'],
-        save_default_payment_method: 'on_subscription'
-      },
-      expand: ['latest_invoice.payment_intent']
-    });
-
-    // Update user plan and subscription
-    await db.query(
-      'UPDATE users SET plan = $1, subscription_id = $2 WHERE id = $3',
-      [plan_id, subscription.id, req.user.userId]
-    );
-
-    res.json({
-      subscription_id: subscription.id,
-      client_secret: subscription.latest_invoice.payment_intent.client_secret,
-      status: subscription.status
-    });
-  } catch (error) {
-    console.error('Subscription creation error:', error);
-    res.status(500).json({ error: 'Failed to create subscription' });
-  }
-});
-
-app.post('/api/billing/cancel-subscription', authenticateToken, async (req, res) => {
-  try {
-    const userResult = await db.query(
-      'SELECT subscription_id FROM users WHERE id = $1',
-      [req.user.userId]
-    );
-
-    if (!userResult.rows[0].subscription_id) {
-      return res.status(400).json({ error: 'No active subscription found' });
-    }
-
-    const subscription = await stripe.subscriptions.update(
-      userResult.rows[0].subscription_id,
-      { cancel_at_period_end: true }
-    );
-
-    res.json({
-      message: 'Subscription cancelled successfully',
-      cancel_at: subscription.cancel_at
-    });
-  } catch (error) {
-    console.error('Subscription cancellation error:', error);
-    res.status(500).json({ error: 'Failed to cancel subscription' });
-  }
-});
-
-// Plan checking middleware
-const checkPlanLimits = async (req, res, next) => {
-  try {
-    const userResult = await db.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
-    const userPlan = userResult.rows[0]?.plan || 'basic';
+    twiml.say({
+        voice: 'alice'
+    }, 'Hello! This is your Switchline number. Please leave a message after the beep.');
     
-    req.userPlan = userPlan;
-    req.planLimits = {
-      'basic': { 
-        phone_numbers: 1,
-        message_history_days: 30,
-        international_numbers: false,
-        auto_destruct: false,
-        team_management: false,
-        api_access: false
-      },
-      'professional': { 
-        phone_numbers: 3,
-        message_history_days: 90,
-        international_numbers: true,
-        auto_destruct: true,
-        team_management: false,
-        api_access: false
-      },
-      'enterprise': { 
-        phone_numbers: 10,
-        message_history_days: 365,
-        international_numbers: true,
-        auto_destruct: true,
-        team_management: true,
-        api_access: true
-      }
-    }[userPlan];
-    
-    next();
-  } catch (error) {
-    console.error('Plan check error:', error);
-    res.status(500).json({ error: 'Failed to check plan limits' });
-  }
-};
-
-// Get user's phone numbers
-app.get('/api/phone/list', authenticateToken, async (req, res) => {
-  try {
-    const result = await db.query(
-      'SELECT phone_number, twilio_sid, area_code, location, status, created_at FROM phone_numbers WHERE user_id = $1 ORDER BY created_at DESC',
-      [req.user.userId]
-    );
-
-    res.json({ 
-      numbers: result.rows,
-      count: result.rows.length
+    twiml.record({
+        timeout: 30,
+        maxLength: 300,
+        action: '/api/twilio/recording-webhook'
     });
-  } catch (error) {
-    console.error('Phone list error:', error);
-    res.status(500).json({ error: 'Failed to retrieve phone numbers' });
-  }
+
+    res.type('text/xml');
+    res.send(twiml.toString());
 });
 
-// Get user profile with plan info
-app.get('/api/user/profile', authenticateToken, checkPlanLimits, async (req, res) => {
-  try {
-    const userResult = await db.query(
-      'SELECT email, plan, credits, status FROM users WHERE id = $1',
-      [req.user.userId]
-    );
+// SMS Webhook
+app.post('/api/twilio/sms-webhook', (req, res) => {
+    const twiml = new twilio.twiml.MessagingResponse();
+    
+    const { From, To, Body } = req.body;
+    
+    // Log the message (in production, store in database)
+    console.log(`SMS received: ${From} -> ${To}: ${Body}`);
+    
+    // Auto-reply
+    twiml.message('Thank you for your message! This is an automated response from Switchline.');
 
-    const phoneCountResult = await db.query(
-      'SELECT COUNT(*) as count FROM phone_numbers WHERE user_id = $1 AND status = $2',
-      [req.user.userId, 'active']
-    );
-
-    const user = userResult.rows[0];
-    const phoneCount = parseInt(phoneCountResult.rows[0].count);
-
-    res.json({
-      ...user,
-      phoneCount,
-      planLimits: req.planLimits,
-      remainingNumbers: req.planLimits.phone_numbers - phoneCount
-    });
-  } catch (error) {
-    console.error('Profile error:', error);
-    res.status(500).json({ error: 'Failed to retrieve profile' });
-  }
+    res.type('text/xml');
+    res.send(twiml.toString());
 });
 
-// Phone number search
-app.get('/api/phone/search', authenticateToken, async (req, res) => {
-  try {
-    const { areaCode } = req.query;
+// STRIPE ROUTES
 
-    if (!areaCode) {
-      return res.status(400).json({ error: 'Area code is required' });
+// Test Stripe Connection
+app.get('/api/stripe/test', async (req, res) => {
+    try {
+        const account = await stripeClient.accounts.retrieve();
+        res.json({
+            success: true,
+            message: 'Stripe connection successful',
+            accountId: account.id,
+            chargesEnabled: account.charges_enabled
+        });
+    } catch (error) {
+        console.error('Stripe test error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Stripe connection failed',
+            error: error.message
+        });
     }
-
-    // Check user's plan limits
-    const userResult = await db.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
-    const userPlan = userResult.rows[0]?.plan || 'basic';
-
-    // Get current phone number count for user
-    const numberCountResult = await db.query(
-      'SELECT COUNT(*) as count FROM phone_numbers WHERE user_id = $1 AND status = $2',
-      [req.user.userId, 'active']
-    );
-    const currentNumbers = parseInt(numberCountResult.rows[0].count);
-
-    // Check plan limits
-    const planLimits = {
-      'basic': { phone_numbers: 1 },
-      'professional': { phone_numbers: 3 },
-      'enterprise': { phone_numbers: 10 }
-    };
-
-    const limit = planLimits[userPlan]?.phone_numbers || 1;
-    
-    if (currentNumbers >= limit) {
-      return res.status(403).json({ 
-        error: `Plan limit reached. ${userPlan} plan allows ${limit} phone number(s). Upgrade to get more numbers.`,
-        currentNumbers,
-        limit,
-        plan: userPlan
-      });
-    }
-
-    // Search for available numbers via Twilio
-    const numbers = await twilio.availablePhoneNumbers('US')
-      .local
-      .list({
-        areaCode: areaCode,
-        limit: 10
-      });
-
-    const formattedNumbers = numbers.map(number => ({
-      phoneNumber: number.phoneNumber,
-      friendlyName: number.friendlyName,
-      locality: number.locality,
-      region: number.region,
-      capabilities: number.capabilities,
-      cost: 3.99 // Standard cost for 30 days
-    }));
-
-    res.json({ 
-      numbers: formattedNumbers,
-      userPlan,
-      currentNumbers,
-      limit,
-      remainingSlots: limit - currentNumbers
-    });
-  } catch (error) {
-    console.error('Phone search error:', error);
-    res.status(500).json({ error: 'Failed to search phone numbers' });
-  }
 });
 
-// Purchase phone number with plan limits
-app.post('/api/phone/purchase', authenticateToken, async (req, res) => {
-  try {
-    const { phoneNumber } = req.body;
+// Create Checkout Session
+app.post('/api/stripe/create-checkout', authenticateToken, async (req, res) => {
+    try {
+        const { phoneNumber, priceId, successUrl, cancelUrl } = req.body;
+        const userId = req.user.userId;
 
-    if (!phoneNumber) {
-      return res.status(400).json({ error: 'Phone number is required' });
+        if (!phoneNumber || !priceId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Phone number and price ID are required'
+            });
+        }
+
+        const session = await stripeClient.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [
+                {
+                    price: priceId,
+                    quantity: 1,
+                },
+            ],
+            mode: 'subscription',
+            success_url: successUrl || `${req.protocol}://${req.get('host')}/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: cancelUrl || `${req.protocol}://${req.get('host')}/cancel`,
+            metadata: {
+                userId: userId,
+                phoneNumber: phoneNumber
+            }
+        });
+
+        res.json({
+            success: true,
+            sessionId: session.id,
+            url: session.url
+        });
+
+    } catch (error) {
+        console.error('Stripe checkout error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to create checkout session',
+            error: error.message
+        });
     }
-
-    // Check user's plan and current usage
-    const userResult = await db.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
-    const userPlan = userResult.rows[0]?.plan || 'basic';
-
-    const numberCountResult = await db.query(
-      'SELECT COUNT(*) as count FROM phone_numbers WHERE user_id = $1 AND status = $2',
-      [req.user.userId, 'active']
-    );
-    const currentNumbers = parseInt(numberCountResult.rows[0].count);
-
-    const planLimits = {
-      'basic': { phone_numbers: 1 },
-      'professional': { phone_numbers: 3 },
-      'enterprise': { phone_numbers: 10 }
-    };
-
-    const limit = planLimits[userPlan]?.phone_numbers || 1;
-
-    if (currentNumbers >= limit) {
-      return res.status(403).json({ 
-        error: `Plan limit reached. ${userPlan} plan allows ${limit} phone number(s). Upgrade to get more numbers.`
-      });
-    }
-
-    // Purchase number from Twilio
-    const incomingPhoneNumber = await twilio.incomingPhoneNumbers.create({
-      phoneNumber: phoneNumber,
-      voiceUrl: `${process.env.BASE_URL || 'https://switchline-backend.onrender.com'}/api/twilio/voice`,
-      smsUrl: `${process.env.BASE_URL || 'https://switchline-backend.onrender.com'}/api/twilio/sms`
-    });
-
-    // Store in database
-    await db.query(
-      'INSERT INTO phone_numbers (user_id, phone_number, twilio_sid, area_code, location) VALUES ($1, $2, $3, $4, $5)',
-      [
-        req.user.userId,
-        phoneNumber,
-        incomingPhoneNumber.sid,
-        phoneNumber.substring(2, 5), // Extract area code
-        incomingPhoneNumber.friendlyName
-      ]
-    );
-
-    res.json({
-      message: 'Phone number purchased successfully',
-      phoneNumber: phoneNumber,
-      sid: incomingPhoneNumber.sid,
-      currentNumbers: currentNumbers + 1,
-      limit: limit
-    });
-  } catch (error) {
-    console.error('Phone purchase error:', error);
-    res.status(500).json({ error: 'Failed to purchase phone number' });
-  }
 });
 
-// Debug routes (remove in production)
-app.get('/api/debug/user/:email', async (req, res) => {
-  try {
-    const user = await db.query('SELECT * FROM users WHERE email = $1', [req.params.email]);
-    
-    if (user.rows.length === 0) {
-      return res.json({ exists: false });
+// Stripe Webhook
+app.post('/api/stripe/webhook', (req, res) => {
+    const sig = req.headers['stripe-signature'];
+    let event;
+
+    try {
+        event = stripeClient.webhooks.constructEvent(req.body, sig, CONFIG.STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+        console.error('Webhook signature verification failed:', err);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    const userData = user.rows[0];
-    res.json({
-      exists: true,
-      email: userData.email,
-      hasPassword: !!userData.password,
-      passwordLength: userData.password?.length,
-      plan: userData.plan,
-      credits: userData.credits,
-      status: userData.status
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    // Handle the event
+    switch (event.type) {
+        case 'checkout.session.completed':
+            const session = event.data.object;
+            console.log('Payment successful for session:', session.id);
+            
+            // Here you would typically:
+            // 1. Purchase the phone number via Twilio
+            // 2. Associate it with the user
+            // 3. Send confirmation email
+            
+            break;
+
+        case 'invoice.payment_failed':
+            console.log('Payment failed for invoice:', event.data.object.id);
+            // Handle failed payment
+            break;
+
+        default:
+            console.log(`Unhandled event type ${event.type}`);
+    }
+
+    res.json({ received: true });
 });
 
-app.post('/api/debug/create-test-user', async (req, res) => {
-  try {
-    const hashedPassword = await bcrypt.hash('test123', 10);
-    
-    const result = await db.query(`
-      INSERT INTO users (email, password, plan, credits, status) 
-      VALUES ($1, $2, $3, $4, $5) 
-      ON CONFLICT (email) DO UPDATE SET
-        password = $2,
-        plan = $3,
-        credits = $4,
-        status = $5
-      RETURNING *
-    `, ['test@switchline.com', hashedPassword, 'pro', 50, 'active']);
-    
-    res.json({ 
-      message: 'Test user created/updated successfully',
-      user: result.rows[0]
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// USER ROUTES
+
+// Get User Dashboard Data
+app.get('/api/user/dashboard', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const numbers = userNumbers.get(userId) || [];
+
+        // Mock stats (in production, calculate from database)
+        const stats = {
+            totalCalls: Math.floor(Math.random() * 100),
+            totalMessages: Math.floor(Math.random() * 200),
+            activeNumbers: numbers.length
+        };
+
+        res.json({
+            success: true,
+            numbers: numbers,
+            stats: stats
+        });
+
+    } catch (error) {
+        console.error('Dashboard error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to load dashboard data',
+            error: error.message
+        });
+    }
+});
+
+// Get User Profile
+app.get('/api/user/profile', authenticateToken, (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const user = users.get(userId);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const userProfile = {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            createdAt: user.createdAt
+        };
+
+        res.json({
+            success: true,
+            user: userProfile
+        });
+
+    } catch (error) {
+        console.error('Profile error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to load user profile',
+            error: error.message
+        });
+    }
 });
 
 // Error handling middleware
-app.use((error, req, res, next) => {
-  console.error('Unhandled error:', error);
-  res.status(500).json({ error: 'Internal server error' });
+app.use((err, req, res, next) => {
+    console.error('Global error handler:', err);
+    
+    res.status(err.status || 500).json({
+        success: false,
+        message: err.message || 'Internal server error',
+        ...(CONFIG.NODE_ENV === 'development' && { stack: err.stack })
+    });
 });
 
 // 404 handler
 app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+    res.status(404).json({
+        success: false,
+        message: 'Endpoint not found',
+        path: req.originalUrl,
+        method: req.method
+    });
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully');
+    process.exit(0);
 });
 
 // Start server
-app.listen(PORT, async () => {
-  console.log('='.repeat(50));
-  console.log(`🚀 Switchline API server running on port ${PORT}`);
-  console.log(`📱 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔧 Database: ${process.env.DATABASE_URL ? 'Connected' : 'Not configured'}`);
-  console.log(`📞 Twilio: ${process.env.TWILIO_ACCOUNT_SID ? 'Configured' : 'Not configured'}`);
-  console.log(`💳 Stripe: ${process.env.STRIPE_SECRET_KEY ? 'Configured' : 'Not configured'}`);
-  console.log('='.repeat(50));
-  console.log('');
-  console.log('🔄 Setting up database...');
-  
-  // Setup database after server starts
-  await setupDatabase();
-  
-  console.log('');
-  console.log('✅ Your service is live 🎉');
-  console.log('');
-  console.log('/' + '='.repeat(48) + '/');
-  console.log('');
-  console.log(`🌐 Available at your primary URL: https://switchline-backend.onrender.com`);
-  console.log('');
-  console.log('/' + '='.repeat(48) + '/');
+app.listen(CONFIG.PORT, () => {
+    console.log(`
+🚀 Switchline Backend Server Started
+📍 Environment: ${CONFIG.NODE_ENV}
+🌐 Port: ${CONFIG.PORT}
+🔗 URL: http://localhost:${CONFIG.PORT}
+📧 Twilio configured: ${CONFIG.TWILIO_ACCOUNT_SID ? '✅' : '❌'}
+💳 Stripe configured: ${CONFIG.STRIPE_SECRET_KEY ? '✅' : '❌'}
+🔐 JWT Secret: ${CONFIG.JWT_SECRET ? '✅' : '❌'}
+
+API Endpoints:
+- GET  / (Health check)
+- POST /api/auth/signup
+- POST /api/auth/login
+- GET  /api/twilio/available-numbers
+- POST /api/twilio/purchase-number
+- POST /api/twilio/make-call
+- POST /api/stripe/create-checkout
+- GET  /api/user/dashboard
+
+🎯 Ready to serve Switchline app requests!
+    `);
 });
+
+module.exports = app;
