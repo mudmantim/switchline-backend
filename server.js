@@ -147,8 +147,29 @@ app.get('/api/debug/subscription-plans-schema', async (req, res) => {
       WHERE table_name = 'subscription_plans' 
       ORDER BY ordinal_position;
     `);
+    
+    const sampleData = await pool.query('SELECT * FROM subscription_plans LIMIT 1');
+    
+    res.json({
+      success: true,
+      columns: result.rows,
+      sample_data: sampleData.rows[0]
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-    // Debug endpoint to test webhook manually
+// Simple test endpoint
+app.get('/api/debug/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Debug endpoint working',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Debug endpoint to test webhook manually
 app.post('/api/debug/test-webhook', async (req, res) => {
   try {
     console.log('🧪 Manual webhook test triggered');
@@ -327,18 +348,6 @@ app.get('/api/debug/subscription-data', async (req, res) => {
       success: false,
       error: error.message
     });
-  }
-});
-    
-    const sampleData = await pool.query('SELECT * FROM subscription_plans LIMIT 1');
-    
-    res.json({
-      success: true,
-      columns: result.rows,
-      sample_data: sampleData.rows[0]
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
