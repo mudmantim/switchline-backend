@@ -169,7 +169,7 @@ app.get('/api/debug/test', (req, res) => {
   });
 });
 
-// Debug endpoint to test webhook manually
+// FIXED: Debug endpoint to test webhook manually - removed salt column references
 app.post('/api/debug/test-webhook', async (req, res) => {
   try {
     console.log('🧪 Manual webhook test triggered');
@@ -211,25 +211,30 @@ app.post('/api/debug/test-webhook', async (req, res) => {
       // Simulate the webhook processing
       console.log('🎉 Mock checkout completed:', mockSession.id);
       
-      // Test user creation
+      // Test user creation - CHECK IF USER EXISTS FIRST
       let user = await pool.query('SELECT * FROM users WHERE email = $1', [mockCustomer.email]);
       
       if (user.rows.length === 0) {
         console.log('👤 Creating test user...');
+        
+        // Create user without ON CONFLICT - check first then insert
         const newUser = await pool.query(`
           INSERT INTO users (email, password_hash, stripe_customer_id, status, created_at, updated_at) 
           VALUES ($1, 'webhook_user', $2, 'active', NOW(), NOW()) 
           RETURNING *
         `, [mockCustomer.email, mockCustomer.id]);
+        
         user = newUser;
         console.log('✅ Test user created');
       } else {
         console.log('👤 Test user already exists');
+        // Update existing user
         await pool.query(`
           UPDATE users 
           SET stripe_customer_id = $1, updated_at = NOW() 
           WHERE email = $2
         `, [mockCustomer.id, mockCustomer.email]);
+        console.log('✅ Test user updated');
       }
       
       // Test subscription creation
@@ -250,46 +255,66 @@ app.post('/api/debug/test-webhook', async (req, res) => {
       const planId = planResult.rows[0].id;
       console.log(`📋 Found plan: ${planName} (${planId})`);
       
-      // Create subscription record
-      await pool.query(`
-        INSERT INTO user_subscriptions (
-          user_id,
-          plan_id,
-          stripe_subscription_id,
-          stripe_customer_id,
-          status,
-          current_period_start,
-          current_period_end,
-          created_at,
-          updated_at
-        ) VALUES (
-          (SELECT id FROM users WHERE email = $1),
-          $2,
-          $3,
-          $4,
-          $5,
-          $6,
-          $7,
-          NOW(),
-          NOW()
-        ) ON CONFLICT (user_id) DO UPDATE SET
-          plan_id = $2,
-          stripe_subscription_id = $3,
-          status = $5,
-          current_period_start = $6,
-          current_period_end = $7,
-          updated_at = NOW()
-      `, [
-        mockCustomer.email,
-        planId,
-        mockSubscription.id,
-        mockSubscription.customer,
-        mockSubscription.status,
-        new Date(mockSubscription.current_period_start * 1000),
-        new Date(mockSubscription.current_period_end * 1000)
-      ]);
+      // Get user ID for subscription
+      const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [mockCustomer.email]);
+      if (userResult.rows.length === 0) {
+        throw new Error('User not found after creation');
+      }
+      const userId = userResult.rows[0].id;
       
-      console.log(`✅ Mock subscription created: ${mockCustomer.email} -> ${planName}`);
+      // Check if subscription already exists
+      const existingSubscription = await pool.query(
+        'SELECT id FROM user_subscriptions WHERE user_id = $1', 
+        [userId]
+      );
+      
+      if (existingSubscription.rows.length === 0) {
+        // Create new subscription
+        await pool.query(`
+          INSERT INTO user_subscriptions (
+            user_id,
+            plan_id,
+            stripe_subscription_id,
+            stripe_customer_id,
+            status,
+            current_period_start,
+            current_period_end,
+            created_at,
+            updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+        `, [
+          userId,
+          planId,
+          mockSubscription.id,
+          mockSubscription.customer,
+          mockSubscription.status,
+          new Date(mockSubscription.current_period_start * 1000),
+          new Date(mockSubscription.current_period_end * 1000)
+        ]);
+        console.log('✅ New subscription created');
+      } else {
+        // Update existing subscription
+        await pool.query(`
+          UPDATE user_subscriptions SET
+            plan_id = $1,
+            stripe_subscription_id = $2,
+            status = $3,
+            current_period_start = $4,
+            current_period_end = $5,
+            updated_at = NOW()
+          WHERE user_id = $6
+        `, [
+          planId,
+          mockSubscription.id,
+          mockSubscription.status,
+          new Date(mockSubscription.current_period_start * 1000),
+          new Date(mockSubscription.current_period_end * 1000),
+          userId
+        ]);
+        console.log('✅ Existing subscription updated');
+      }
+      
+      console.log(`✅ Mock subscription processed: ${mockCustomer.email} -> ${planName}`);
       
       res.json({
         success: true,
@@ -423,7 +448,7 @@ async function handleCheckoutCompleted(session) {
     let user = await pool.query('SELECT * FROM users WHERE email = $1', [customer.email]);
     
     if (user.rows.length === 0) {
-      // Create new user if doesn't exist - FIXED SQL SYNTAX (no salt/name columns)
+      // Create new user if doesn't exist - FIXED: removed salt column
       const newUser = await pool.query(`
         INSERT INTO users (email, password_hash, stripe_customer_id, status, created_at, updated_at) 
         VALUES ($1, 'webhook_user', $2, 'active', NOW(), NOW()) 
@@ -559,7 +584,7 @@ async function handlePaymentFailed(invoice) {
   }
 }
 
-// Helper function to create user subscription - FIXED
+// FIXED: Helper function to create user subscription - removed ON CONFLICT issues
 async function createUserSubscription(subscription, userEmail) {
   try {
     // Get plan details from Stripe price
@@ -579,44 +604,62 @@ async function createUserSubscription(subscription, userEmail) {
     
     const planId = planResult.rows[0].id;
     
-    // Create or update subscription
-    await pool.query(`
-      INSERT INTO user_subscriptions (
-        user_id,
-        plan_id,
-        stripe_subscription_id,
-        stripe_customer_id,
-        status,
-        current_period_start,
-        current_period_end,
-        created_at,
-        updated_at
-      ) VALUES (
-        (SELECT id FROM users WHERE email = $1),
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        NOW(),
-        NOW()
-      ) ON CONFLICT (user_id) DO UPDATE SET
-        plan_id = $2,
-        stripe_subscription_id = $3,
-        status = $5,
-        current_period_start = $6,
-        current_period_end = $7,
-        updated_at = NOW()
-    `, [
-      userEmail,
-      planId,
-      subscription.id,
-      subscription.customer,
-      subscription.status,
-      new Date(subscription.current_period_start * 1000),
-      new Date(subscription.current_period_end * 1000)
-    ]);
+    // Get user ID
+    const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [userEmail]);
+    if (userResult.rows.length === 0) {
+      throw new Error(`User not found: ${userEmail}`);
+    }
+    const userId = userResult.rows[0].id;
+    
+    // Check if subscription exists and handle appropriately
+    const existingSubscription = await pool.query(
+      'SELECT id FROM user_subscriptions WHERE user_id = $1', 
+      [userId]
+    );
+    
+    if (existingSubscription.rows.length === 0) {
+      // Create new subscription
+      await pool.query(`
+        INSERT INTO user_subscriptions (
+          user_id,
+          plan_id,
+          stripe_subscription_id,
+          stripe_customer_id,
+          status,
+          current_period_start,
+          current_period_end,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+      `, [
+        userId,
+        planId,
+        subscription.id,
+        subscription.customer,
+        subscription.status,
+        new Date(subscription.current_period_start * 1000),
+        new Date(subscription.current_period_end * 1000)
+      ]);
+    } else {
+      // Update existing subscription
+      await pool.query(`
+        UPDATE user_subscriptions SET
+          plan_id = $1,
+          stripe_subscription_id = $2,
+          status = $3,
+          current_period_start = $4,
+          current_period_end = $5,
+          updated_at = NOW()
+        WHERE user_id = $6
+      `, [
+        planId,
+        subscription.id,
+        subscription.status,
+        new Date(subscription.current_period_start * 1000),
+        new Date(subscription.current_period_end * 1000),
+        userId
+      ]);
+    }
     
     console.log(`✅ User subscription created/updated: ${userEmail} -> ${planName}`);
   } catch (error) {
@@ -859,13 +902,12 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      `INSERT INTO users (email, password_hash, salt, first_name, last_name, status, created_at, updated_at) 
-       VALUES ($1, $2, $3, $4, $5, 'active', NOW(), NOW()) RETURNING id, email, first_name, last_name`,
-      [email, passwordHash, salt, firstName, lastName]
+      `INSERT INTO users (email, password_hash, created_at, updated_at) 
+       VALUES ($1, $2, NOW(), NOW()) RETURNING id, email`,
+      [email, passwordHash]
     );
 
     const user = result.rows[0];
@@ -881,9 +923,7 @@ app.post('/api/auth/register', async (req, res) => {
       token,
       user: {
         id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name
+        email: user.email
       }
     });
 
@@ -891,392 +931,4 @@ app.post('/api/auth/register', async (req, res) => {
     console.error('Registration error:', error);
     res.status(500).json({ error: 'Registration failed' });
   }
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    const result = await pool.query(
-      'SELECT id, email, password_hash, first_name, last_name, status FROM users WHERE email = $1',
-      [email]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const user = result.rows[0];
-
-    if (user.status !== 'active') {
-      return res.status(401).json({ error: 'Account is not active' });
-    }
-
-    const validPassword = await bcrypt.compare(password, user.password_hash);
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
-
-    const token = jwt.sign(
-      { id: user.id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name
-      }
-    });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-// ============================================================================
-// PHONE NUMBER ENDPOINTS
-// ============================================================================
-
-app.get('/api/numbers/search/:areaCode', async (req, res) => {
-  try {
-    const { areaCode } = req.params;
-
-    if (!areaCode || areaCode.length !== 3) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Valid 3-digit area code required' 
-      });
-    }
-
-    const availableNumbers = await twilioClient.availablePhoneNumbers('US')
-      .local
-      .list({
-        areaCode: areaCode,
-        limit: 10
-      });
-
-    const formattedNumbers = availableNumbers.map(number => ({
-      phoneNumber: number.phoneNumber,
-      friendlyName: number.friendlyName,
-      locality: number.locality,
-      region: number.region,
-      capabilities: number.capabilities
-    }));
-
-    res.json({
-      success: true,
-      numbers: formattedNumbers
-    });
-
-  } catch (error) {
-    console.error('Number search error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to search for numbers',
-      details: error.message
-    });
-  }
-});
-
-app.post('/api/numbers/purchase', authenticateToken, async (req, res) => {
-  try {
-    const { phoneNumber } = req.body;
-
-    if (!phoneNumber) {
-      return res.status(400).json({ error: 'Phone number is required' });
-    }
-
-    // Check user's plan limits
-    const userResult = await pool.query(`
-      SELECT u.phone_numbers_limit, COUNT(pn.id) as current_count
-      FROM users u
-      LEFT JOIN phone_numbers pn ON u.id = pn.user_id AND pn.status != 'burned'
-      WHERE u.id = $1
-      GROUP BY u.id, u.phone_numbers_limit
-    `, [req.user.id]);
-
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const { phone_numbers_limit, current_count } = userResult.rows[0];
-    
-    if (current_count >= phone_numbers_limit) {
-      return res.status(400).json({ 
-        error: 'Phone number limit reached for your plan',
-        limit: phone_numbers_limit,
-        current: current_count
-      });
-    }
-
-    // Purchase number through Twilio
-    const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
-      phoneNumber: phoneNumber,
-      voiceUrl: `${process.env.BASE_URL}/webhook/twilio/voice`,
-      smsUrl: `${process.env.BASE_URL}/webhook/twilio/sms`
-    });
-
-    // Store in database
-    const result = await pool.query(`
-      INSERT INTO phone_numbers (user_id, phone_number, twilio_sid, status, purchased_at)
-      VALUES ($1, $2, $3, 'active', CURRENT_TIMESTAMP)
-      RETURNING id, phone_number, status, purchased_at
-    `, [req.user.id, phoneNumber, purchasedNumber.sid]);
-
-    res.json({
-      success: true,
-      number: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Number purchase error:', error);
-    res.status(500).json({ error: 'Failed to purchase number' });
-  }
-});
-
-app.get('/api/numbers', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT id, phone_number, status, purchased_at, burned_at
-      FROM phone_numbers 
-      WHERE user_id = $1 AND status != 'burned'
-      ORDER BY purchased_at DESC
-    `, [req.user.id]);
-
-    res.json({
-      success: true,
-      numbers: result.rows
-    });
-
-  } catch (error) {
-    console.error('Get numbers error:', error);
-    res.status(500).json({ error: 'Failed to fetch numbers' });
-  }
-});
-
-app.delete('/api/numbers/:id/burn', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const numberResult = await pool.query(
-      'SELECT phone_number, twilio_sid FROM phone_numbers WHERE id = $1 AND user_id = $2 AND status = $3',
-      [id, req.user.id, 'active']
-    );
-
-    if (numberResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Number not found or already burned' });
-    }
-
-    const { phone_number, twilio_sid } = numberResult.rows[0];
-
-    // Release number from Twilio
-    await twilioClient.incomingPhoneNumbers(twilio_sid).remove();
-
-    // Update database
-    await pool.query(`
-      UPDATE phone_numbers 
-      SET status = 'burned', burned_at = CURRENT_TIMESTAMP 
-      WHERE id = $1
-    `, [id]);
-
-    res.json({
-      success: true,
-      message: 'Number burned successfully'
-    });
-
-  } catch (error) {
-    console.error('Burn number error:', error);
-    res.status(500).json({ error: 'Failed to burn number' });
-  }
-});
-
-// ============================================================================
-// MESSAGING ENDPOINTS
-// ============================================================================
-
-app.post('/api/messages/send', authenticateToken, async (req, res) => {
-  try {
-    const { to, body, from } = req.body;
-
-    if (!to || !body) {
-      return res.status(400).json({ error: 'To and body are required' });
-    }
-
-    let fromNumber = from;
-    if (!fromNumber) {
-      const activeNumberResult = await pool.query(`
-        SELECT pn.phone_number 
-        FROM users u
-        JOIN phone_numbers pn ON u.active_phone_number_id = pn.id
-        WHERE u.id = $1
-      `, [req.user.id]);
-
-      if (activeNumberResult.rows.length === 0) {
-        return res.status(400).json({ error: 'No active phone number found' });
-      }
-      fromNumber = activeNumberResult.rows[0].phone_number;
-    }
-
-    const message = await twilioClient.messages.create({
-      body: body,
-      from: fromNumber,
-      to: to
-    });
-
-    await pool.query(`
-      INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status)
-      VALUES ($1, $2, $3, $4, 'outbound', $5, $6)
-    `, [req.user.id, fromNumber, to, body, message.sid, message.status]);
-
-    res.json({
-      success: true,
-      messageSid: message.sid,
-      status: message.status
-    });
-
-  } catch (error) {
-    console.error('Send message error:', error);
-    res.status(500).json({ error: 'Failed to send message' });
-  }
-});
-
-// ============================================================================
-// CALLING ENDPOINTS
-// ============================================================================
-
-app.post('/api/calls/make', authenticateToken, async (req, res) => {
-  try {
-    const { to, from } = req.body;
-
-    if (!to) {
-      return res.status(400).json({ error: 'To number is required' });
-    }
-
-    let fromNumber = from;
-    if (!fromNumber) {
-      const activeNumberResult = await pool.query(`
-        SELECT pn.phone_number 
-        FROM users u
-        JOIN phone_numbers pn ON u.active_phone_number_id = pn.id
-        WHERE u.id = $1
-      `, [req.user.id]);
-
-      if (activeNumberResult.rows.length === 0) {
-        return res.status(400).json({ error: 'No active phone number found' });
-      }
-      fromNumber = activeNumberResult.rows[0].phone_number;
-    }
-
-    const call = await twilioClient.calls.create({
-      to: to,
-      from: fromNumber,
-      url: `${process.env.BASE_URL}/webhook/twilio/voice`
-    });
-
-    await pool.query(`
-      INSERT INTO calls (user_id, from_number, to_number, direction, twilio_sid, status)
-      VALUES ($1, $2, $3, 'outbound', $4, $5)
-    `, [req.user.id, fromNumber, to, call.sid, call.status]);
-
-    res.json({
-      success: true,
-      callSid: call.sid,
-      status: call.status
-    });
-
-  } catch (error) {
-    console.error('Make call error:', error);
-    res.status(500).json({ error: 'Failed to make call' });
-  }
-});
-
-// ============================================================================
-// BILLING ENDPOINTS  
-// ============================================================================
-
-app.get('/api/billing/subscription', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT u.*, sp.name as plan_name, sp.price_cents, sp.phone_numbers_limit, sp.minutes_limit, sp.sms_limit
-      FROM users u
-      LEFT JOIN subscription_plans sp ON u.subscription_plan_id = sp.id
-      WHERE u.id = $1
-    `, [req.user.id]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const user = result.rows[0];
-
-    res.json({
-      subscription: {
-        planName: user.plan_name || 'Free',
-        price: user.price_cents ? user.price_cents / 100 : 0,
-        limits: {
-          phoneNumbers: user.phone_numbers_limit || 1,
-          minutes: user.minutes_limit || 100,
-          sms: user.sms_limit || 50
-        }
-      },
-      stripeCustomerId: user.stripe_customer_id
-    });
-  } catch (error) {
-    console.error('Failed to fetch subscription:', error);
-    res.status(500).json({ error: 'Failed to fetch subscription info' });
-  }
-});
-
-// ============================================================================
-// WEBHOOK ENDPOINTS
-// ============================================================================
-
-app.post('/webhook/twilio/voice', (req, res) => {
-  const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say('Hello from Switchline! This call is being handled.');
-  
-  res.type('text/xml');
-  res.send(twiml.toString());
-});
-
-app.post('/webhook/twilio/sms', async (req, res) => {
-  try {
-    const { From, To, Body, MessageSid } = req.body;
-
-    const userResult = await pool.query(
-      'SELECT user_id FROM phone_numbers WHERE phone_number = $1 AND status = $2',
-      [To, 'active']
-    );
-
-    if (userResult.rows.length > 0) {
-      await pool.query(`
-        INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status)
-        VALUES ($1, $2, $3, $4, 'inbound', $5, 'received')
-      `, [userResult.rows[0].user_id, From, To, Body, MessageSid]);
-    }
-
-    res.status(200).send('OK');
-  } catch (error) {
-    console.error('SMS webhook error:', error);
-    res.status(500).send('Error');
-  }
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`Switchline backend server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
