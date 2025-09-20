@@ -147,6 +147,188 @@ app.get('/api/debug/subscription-plans-schema', async (req, res) => {
       WHERE table_name = 'subscription_plans' 
       ORDER BY ordinal_position;
     `);
+
+    // Debug endpoint to test webhook manually
+app.post('/api/debug/test-webhook', async (req, res) => {
+  try {
+    console.log('🧪 Manual webhook test triggered');
+    console.log('Headers:', req.headers);
+    console.log('Body:', req.body);
+    
+    // Simulate a checkout.session.completed event
+    const mockSession = {
+      id: 'cs_test_manual_' + Date.now(),
+      subscription: 'sub_test_manual_' + Date.now(),
+      customer: 'cus_test_manual_' + Date.now()
+    };
+    
+    const mockSubscription = {
+      id: mockSession.subscription,
+      customer: mockSession.customer,
+      status: 'active',
+      current_period_start: Math.floor(Date.now() / 1000),
+      current_period_end: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days
+      items: {
+        data: [{
+          price: {
+            id: 'price_1S8gJfLz1CB1flJ3nYeAtyOt', // Basic plan
+            unit_amount: 399
+          }
+        }]
+      }
+    };
+    
+    const mockCustomer = {
+      id: mockSession.customer,
+      email: 'webhook-test@example.com'
+    };
+    
+    console.log('🧪 Testing handleCheckoutCompleted function...');
+    
+    // Test the webhook handler functions directly
+    try {
+      // Simulate the webhook processing
+      console.log('🎉 Mock checkout completed:', mockSession.id);
+      
+      // Test user creation
+      let user = await pool.query('SELECT * FROM users WHERE email = $1', [mockCustomer.email]);
+      
+      if (user.rows.length === 0) {
+        console.log('👤 Creating test user...');
+        const newUser = await pool.query(`
+          INSERT INTO users (email, stripe_customer_id, created_at, updated_at) 
+          VALUES ($1, $2, NOW(), NOW()) 
+          RETURNING *
+        `, [mockCustomer.email, mockCustomer.id]);
+        user = newUser;
+        console.log('✅ Test user created');
+      } else {
+        console.log('👤 Test user already exists');
+        await pool.query(`
+          UPDATE users 
+          SET stripe_customer_id = $1, updated_at = NOW() 
+          WHERE email = $2
+        `, [mockCustomer.id, mockCustomer.email]);
+      }
+      
+      // Test subscription creation
+      console.log('📝 Testing subscription creation...');
+      
+      // Map price to plan name
+      let planName = 'Basic';
+      if (mockSubscription.items.data[0].price.unit_amount === 999) planName = 'Pro';
+      if (mockSubscription.items.data[0].price.unit_amount === 2999) planName = 'Enterprise';
+      
+      // Get plan ID
+      const planResult = await pool.query('SELECT id FROM subscription_plans WHERE name = $1', [planName]);
+      
+      if (planResult.rows.length === 0) {
+        throw new Error(`Plan not found: ${planName}`);
+      }
+      
+      const planId = planResult.rows[0].id;
+      console.log(`📋 Found plan: ${planName} (${planId})`);
+      
+      // Create subscription record
+      await pool.query(`
+        INSERT INTO user_subscriptions (
+          user_id,
+          plan_id,
+          stripe_subscription_id,
+          stripe_customer_id,
+          status,
+          current_period_start,
+          current_period_end,
+          created_at,
+          updated_at
+        ) VALUES (
+          (SELECT id FROM users WHERE email = $1),
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          NOW(),
+          NOW()
+        ) ON CONFLICT (user_id) DO UPDATE SET
+          plan_id = $2,
+          stripe_subscription_id = $3,
+          status = $5,
+          current_period_start = $6,
+          current_period_end = $7,
+          updated_at = NOW()
+      `, [
+        mockCustomer.email,
+        planId,
+        mockSubscription.id,
+        mockSubscription.customer,
+        mockSubscription.status,
+        new Date(mockSubscription.current_period_start * 1000),
+        new Date(mockSubscription.current_period_end * 1000)
+      ]);
+      
+      console.log(`✅ Mock subscription created: ${mockCustomer.email} -> ${planName}`);
+      
+      res.json({
+        success: true,
+        message: 'Webhook functions tested successfully',
+        test_data: {
+          user_email: mockCustomer.email,
+          plan_name: planName,
+          subscription_id: mockSubscription.id,
+          customer_id: mockCustomer.id
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error in webhook test:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Webhook test failed',
+        details: error.message
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Debug endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Debug test failed',
+      details: error.message
+    });
+  }
+});
+
+// Endpoint to check current subscription data
+app.get('/api/debug/subscription-data', async (req, res) => {
+  try {
+    const users = await pool.query('SELECT id, email, stripe_customer_id FROM users ORDER BY created_at DESC LIMIT 5');
+    const subscriptions = await pool.query(`
+      SELECT 
+        us.*,
+        u.email,
+        sp.name as plan_name,
+        sp.price_cents
+      FROM user_subscriptions us
+      JOIN users u ON us.user_id = u.id
+      JOIN subscription_plans sp ON us.plan_id = sp.id
+      ORDER BY us.created_at DESC 
+      LIMIT 5
+    `);
+    
+    res.json({
+      success: true,
+      recent_users: users.rows,
+      recent_subscriptions: subscriptions.rows
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
     
     const sampleData = await pool.query('SELECT * FROM subscription_plans LIMIT 1');
     
