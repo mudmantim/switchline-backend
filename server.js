@@ -111,6 +111,33 @@ app.get('/api/twilio/test', async (req, res) => {
   }
 });
 
+// Database verification endpoint
+app.get('/api/debug/database', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      ORDER BY table_name;
+    `);
+    
+    const planCount = await pool.query('SELECT COUNT(*) FROM subscription_plans');
+    
+    res.json({
+      success: true,
+      tables: result.rows.map(row => row.table_name),
+      subscription_plans: parseInt(planCount.rows[0].count),
+      database_ready: result.rows.length > 0
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      database_ready: false
+    });
+  }
+});
+
 // ============================================================================
 // AUTHENTICATION ENDPOINTS
 // ============================================================================
