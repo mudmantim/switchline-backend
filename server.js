@@ -217,10 +217,10 @@ app.post('/api/debug/test-webhook', async (req, res) => {
       if (user.rows.length === 0) {
         console.log('👤 Creating test user...');
         const newUser = await pool.query(`
-  INSERT INTO users (email, stripe_customer_id, status, created_at, updated_at) 
-  VALUES ($1, $2, 'webhook_user', 'no_salt', 'Webhook', 'Test', 'active', NOW(), NOW()) 
-  RETURNING *
-`, [mockCustomer.email, mockCustomer.id]);
+          INSERT INTO users (email, password_hash, salt, first_name, last_name, stripe_customer_id, status, created_at, updated_at) 
+          VALUES ($1, 'webhook_user', 'no_salt', 'Webhook', 'Test', $2, 'active', NOW(), NOW()) 
+          RETURNING *
+        `, [mockCustomer.email, mockCustomer.id]);
         user = newUser;
         console.log('✅ Test user created');
       } else {
@@ -233,7 +233,7 @@ app.post('/api/debug/test-webhook', async (req, res) => {
       }
       
       // Test subscription creation
-      console.log('📝 Testing subscription creation...');
+      console.log('📋 Testing subscription creation...');
       
       // Map price to plan name
       let planName = 'Basic';
@@ -408,7 +408,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // =====================================
-// STRIPE EVENT HANDLERS
+// STRIPE EVENT HANDLERS - FIXED
 // =====================================
 
 async function handleCheckoutCompleted(session) {
@@ -423,10 +423,10 @@ async function handleCheckoutCompleted(session) {
     let user = await pool.query('SELECT * FROM users WHERE email = $1', [customer.email]);
     
     if (user.rows.length === 0) {
-      // Create new user if doesn't exist
+      // Create new user if doesn't exist - FIXED SQL SYNTAX
       const newUser = await pool.query(`
-        INSERT INTO users (email, stripe_customer_id, created_at, updated_at) 
-        VALUES ($1, $2, 'active', NOW(), NOW()) 
+        INSERT INTO users (email, password_hash, salt, first_name, last_name, stripe_customer_id, status, created_at, updated_at) 
+        VALUES ($1, 'webhook_user', 'no_salt', 'Webhook', 'User', $2, 'active', NOW(), NOW()) 
         RETURNING *
       `, [customer.email, customer.id]);
       user = newUser;
@@ -448,7 +448,7 @@ async function handleCheckoutCompleted(session) {
 }
 
 async function handleSubscriptionCreated(subscription) {
-  console.log('📝 Subscription created:', subscription.id);
+  console.log('📋 Subscription created:', subscription.id);
   
   try {
     const customer = await stripe.customers.retrieve(subscription.customer);
@@ -559,13 +559,13 @@ async function handlePaymentFailed(invoice) {
   }
 }
 
-// Helper function to create user subscription
+// Helper function to create user subscription - FIXED
 async function createUserSubscription(subscription, userEmail) {
   try {
     // Get plan details from Stripe price
     const price = await stripe.prices.retrieve(subscription.items.data[0].price.id);
     
-    // Map Stripe price to our plan
+    // Map Stripe price to our plan - FIXED MAPPING
     let planName = 'Basic';
     if (price.unit_amount === 999) planName = 'Pro';
     if (price.unit_amount === 2999) planName = 'Enterprise';
@@ -672,7 +672,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
         },
       ],
       mode: 'subscription',
-      success_url: `https://example.com/?session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `https://switchline.app/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONTEND_URL || 'https://switchline.app'}/pricing`,
       metadata: {
         planName: planName || 'Unknown'
@@ -863,8 +863,8 @@ app.post('/api/auth/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, salt);
 
     const result = await pool.query(
-      `INSERT INTO users (email, password_hash, salt, first_name, last_name, status) 
-       VALUES ($1, $2, $3, $4, $5, 'active') RETURNING id, email, first_name, last_name`,
+      `INSERT INTO users (email, password_hash, salt, first_name, last_name, status, created_at, updated_at) 
+       VALUES ($1, $2, $3, $4, $5, 'active', NOW(), NOW()) RETURNING id, email, first_name, last_name`,
       [email, passwordHash, salt, firstName, lastName]
     );
 
@@ -1280,4 +1280,3 @@ app.listen(PORT, () => {
   console.log(`Switchline backend server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
-    
