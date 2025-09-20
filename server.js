@@ -426,7 +426,7 @@ async function handleCheckoutCompleted(session) {
       // Create new user if doesn't exist
       const newUser = await pool.query(`
         INSERT INTO users (email, stripe_customer_id, created_at, updated_at) 
-        VALUES ($1, $2, NOW(), NOW()) 
+        VALUES ($1, $2, 'active', NOW(), NOW()) 
         RETURNING *
       `, [customer.email, customer.id]);
       user = newUser;
