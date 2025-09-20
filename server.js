@@ -12,7 +12,6 @@ const PORT = process.env.PORT || 3001;
 // Initialize services
 const twilio = require('twilio');
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const stripeClient = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // Database connection
 const pool = new Pool({
