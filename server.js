@@ -20,6 +20,7 @@ const pool = new Pool({
 });
 
 // Middleware
+app.use('/webhook', express.raw({type: 'application/json'})); // Raw middleware for webhook
 app.use(express.json());
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
@@ -53,7 +54,7 @@ async function getOrCreateStripeCustomer(userId, email, name) {
       return userResult.rows[0].stripe_customer_id;
     }
 
-    const customer = await stripeClient.customers.create({
+    const customer = await stripe.customers.create({
       email: email,
       name: name,
       metadata: { userId: userId }
@@ -137,40 +138,12 @@ app.get('/api/debug/database', async (req, res) => {
   }
 });
 
-// ============================================================================
-// AUTHENTICATION ENDPOINTS
-// ============================================================================
-
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { email, password, firstName, lastName } = req.body;
-
-    if (!email || !password || !firstName || !lastName) {
-      return res.status(400).json({ error: 'All fields are required' });
-    }
-
-    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: 'User already exists' });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
-
-    const result = await pool.query(
-      `INSERT INTO users (email, password_hash, salt, first_name, last_name, status) 
-       VALUES ($1, $2, $3, $4, $5, 'active') RETURNING id, email, first_name, last_name`,
-      [email, passwordHash, salt, firstName, lastName]
-    );
-
 // =====================================
 // STRIPE WEBHOOK INTEGRATION
 // =====================================
 
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-
 // Stripe webhook endpoint - handles subscription events
-app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
+app.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
@@ -438,6 +411,249 @@ async function createUserSubscription(subscription, userEmail) {
     throw error;
   }
 }
+
+// =====================================
+// SUBSCRIPTION CREATION ENDPOINTS
+// =====================================
+
+// Create checkout session for subscription
+app.post('/api/create-checkout-session', async (req, res) => {
+  try {
+    const { priceId, userEmail, planName } = req.body;
+    
+    if (!priceId || !userEmail) {
+      return res.status(400).json({ error: 'Price ID and email required' });
+    }
+
+    // Create or retrieve customer
+    let customer;
+    try {
+      const customers = await stripe.customers.list({
+        email: userEmail,
+        limit: 1
+      });
+      
+      if (customers.data.length > 0) {
+        customer = customers.data[0];
+      } else {
+        customer = await stripe.customers.create({
+          email: userEmail,
+          metadata: {
+            source: 'Switchline App'
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error with customer:', error);
+      return res.status(500).json({ error: 'Failed to create customer' });
+    }
+
+    // Create checkout session
+    const session = await stripe.checkout.sessions.create({
+      customer: customer.id,
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
+      mode: 'subscription',
+      success_url: `${process.env.FRONTEND_URL || 'https://switchline.app'}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL || 'https://switchline.app'}/pricing`,
+      metadata: {
+        planName: planName || 'Unknown'
+      }
+    });
+
+    console.log(`✅ Checkout session created: ${session.id} for ${userEmail}`);
+    
+    res.json({
+      success: true,
+      sessionId: session.id,
+      url: session.url
+    });
+
+  } catch (error) {
+    console.error('❌ Error creating checkout session:', error);
+    res.status(500).json({ 
+      error: 'Failed to create checkout session',
+      details: error.message 
+    });
+  }
+});
+
+// Get subscription status for a user
+app.get('/api/subscription-status/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+    
+    // Get user and subscription from database
+    const result = await pool.query(`
+      SELECT 
+        u.id as user_id,
+        u.email,
+        us.status,
+        us.current_period_end,
+        sp.name as plan_name,
+        sp.price,
+        sp.features
+      FROM users u
+      LEFT JOIN user_subscriptions us ON u.id = us.user_id
+      LEFT JOIN subscription_plans sp ON us.plan_id = sp.id
+      WHERE u.email = $1
+    `, [email]);
+    
+    if (result.rows.length === 0) {
+      return res.json({
+        hasSubscription: false,
+        message: 'User not found'
+      });
+    }
+    
+    const user = result.rows[0];
+    
+    if (!user.status) {
+      return res.json({
+        hasSubscription: false,
+        user: {
+          email: user.email,
+          id: user.user_id
+        }
+      });
+    }
+    
+    const isActive = user.status === 'active' && new Date(user.current_period_end) > new Date();
+    
+    res.json({
+      hasSubscription: isActive,
+      subscription: {
+        status: user.status,
+        planName: user.plan_name,
+        price: user.price,
+        features: user.features,
+        currentPeriodEnd: user.current_period_end,
+        isActive: isActive
+      },
+      user: {
+        email: user.email,
+        id: user.user_id
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting subscription status:', error);
+    res.status(500).json({ 
+      error: 'Failed to get subscription status',
+      details: error.message 
+    });
+  }
+});
+
+// Cancel subscription
+app.post('/api/cancel-subscription', async (req, res) => {
+  try {
+    const { userEmail } = req.body;
+    
+    if (!userEmail) {
+      return res.status(400).json({ error: 'Email required' });
+    }
+    
+    // Get user's subscription
+    const result = await pool.query(`
+      SELECT us.stripe_subscription_id 
+      FROM users u
+      JOIN user_subscriptions us ON u.id = us.user_id
+      WHERE u.email = $1 AND us.status = 'active'
+    `, [userEmail]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No active subscription found' });
+    }
+    
+    const subscriptionId = result.rows[0].stripe_subscription_id;
+    
+    // Cancel in Stripe
+    const subscription = await stripe.subscriptions.update(subscriptionId, {
+      cancel_at_period_end: true
+    });
+    
+    console.log(`✅ Subscription canceled: ${subscriptionId} for ${userEmail}`);
+    
+    res.json({
+      success: true,
+      message: 'Subscription will cancel at period end',
+      cancelAt: new Date(subscription.current_period_end * 1000)
+    });
+    
+  } catch (error) {
+    console.error('❌ Error canceling subscription:', error);
+    res.status(500).json({ 
+      error: 'Failed to cancel subscription',
+      details: error.message 
+    });
+  }
+});
+
+// Test endpoint to verify subscription system
+app.get('/api/test-subscription-system', async (req, res) => {
+  try {
+    // Test database connections
+    const plans = await pool.query('SELECT * FROM subscription_plans ORDER BY price');
+    const userCount = await pool.query('SELECT COUNT(*) FROM users');
+    const subscriptionCount = await pool.query('SELECT COUNT(*) FROM user_subscriptions');
+    
+    res.json({
+      success: true,
+      system_status: 'ready',
+      available_plans: plans.rows,
+      stats: {
+        total_users: parseInt(userCount.rows[0].count),
+        total_subscriptions: parseInt(subscriptionCount.rows[0].count)
+      },
+      stripe_configured: !!process.env.STRIPE_SECRET_KEY,
+      webhook_configured: !!process.env.STRIPE_WEBHOOK_SECRET,
+      test_price_ids: {
+        basic: 'price_1S8gJfLz1CB1flJ3nYeAtyOt',
+        pro: 'price_1S8gJmLz1CB1flJ3vWyz737X', 
+        enterprise: 'price_1S8gJrLz1CB1flJ3P6urv3f9'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error testing subscription system:', error);
+    res.status(500).json({ 
+      error: 'Subscription system test failed',
+      details: error.message 
+    });
+  }
+});
+
+// ============================================================================
+// AUTHENTICATION ENDPOINTS
+// ============================================================================
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, firstName, lastName } = req.body;
+
+    if (!email || !password || !firstName || !lastName) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const result = await pool.query(
+      `INSERT INTO users (email, password_hash, salt, first_name, last_name, status) 
+       VALUES ($1, $2, $3, $4, $5, 'active') RETURNING id, email, first_name, last_name`,
+      [email, passwordHash, salt, firstName, lastName]
+    );
 
     const user = result.rows[0];
 
@@ -843,37 +1059,6 @@ app.post('/webhook/twilio/sms', async (req, res) => {
   } catch (error) {
     console.error('SMS webhook error:', error);
     res.status(500).send('Error');
-  }
-});
-
-app.post('/api/webhooks/stripe', async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-
-  try {
-    const event = stripeClient.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-
-    switch (event.type) {
-      case 'customer.subscription.created':
-      case 'customer.subscription.updated':
-        // Update user's subscription in database
-        break;
-      case 'customer.subscription.deleted':
-        // Handle subscription cancellation
-        break;
-      case 'invoice.payment_succeeded':
-        // Handle successful payment
-        break;
-      case 'invoice.payment_failed':
-        // Handle failed payment
-        break;
-      default:
-        console.log(`Unhandled event type ${event.type}`);
-    }
-
-    res.json({ received: true });
-  } catch (err) {
-    console.error('Webhook signature verification failed:', err);
-    res.status(400).send(`Webhook Error: ${err.message}`);
   }
 });
 
