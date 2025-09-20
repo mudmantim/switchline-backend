@@ -5,412 +5,7 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
-// Initialize Express app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    const result = await pool.query(
-      'SELECT id, email, password_hash, status FROM users WHERE email = $1',
-      [email]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const user = result.rows[0];
-
-    if (user.status !== 'active') {
-      return res.status(401).json({ error: 'Account is not active' });
-    }
-
-    const validPassword = await bcrypt.compare(password, user.password_hash);
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    await pool.query('UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
-
-    const token = jwt.sign(
-      { id: user.id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email
-      }
-    });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-// ============================================================================
-// PHONE NUMBER ENDPOINTS
-// ============================================================================
-
-app.get('/api/numbers/search/:areaCode', async (req, res) => {
-  try {
-    const { areaCode } = req.params;
-
-    if (!areaCode || areaCode.length !== 3) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Valid 3-digit area code required' 
-      });
-    }
-
-    const availableNumbers = await twilioClient.availablePhoneNumbers('US')
-      .local
-      .list({
-        areaCode: areaCode,
-        limit: 10
-      });
-
-    const formattedNumbers = availableNumbers.map(number => ({
-      phoneNumber: number.phoneNumber,
-      friendlyName: number.friendlyName,
-      locality: number.locality,
-      region: number.region,
-      capabilities: number.capabilities
-    }));
-
-    res.json({
-      success: true,
-      numbers: formattedNumbers
-    });
-
-  } catch (error) {
-    console.error('Number search error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to search for numbers',
-      details: error.message
-    });
-  }
-});
-
-app.post('/api/numbers/purchase', authenticateToken, async (req, res) => {
-  try {
-    const { phoneNumber } = req.body;
-
-    if (!phoneNumber) {
-      return res.status(400).json({ error: 'Phone number is required' });
-    }
-
-    // Check user's plan limits
-    const userResult = await pool.query(`
-      SELECT COUNT(pn.id) as current_count
-      FROM phone_numbers pn 
-      WHERE pn.user_id = $1 AND pn.status != 'burned'
-    `, [req.user.id]);
-
-    const currentCount = parseInt(userResult.rows[0].current_count) || 0;
-    
-    // Basic limit check (can be enhanced with plan-based limits later)
-    if (currentCount >= 5) {
-      return res.status(400).json({ 
-        error: 'Phone number limit reached for your plan',
-        current: currentCount
-      });
-    }
-
-    // Purchase number through Twilio
-    const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
-      phoneNumber: phoneNumber,
-      voiceUrl: `${process.env.BASE_URL}/webhook/twilio/voice`,
-      smsUrl: `${process.env.BASE_URL}/webhook/twilio/sms`
-    });
-
-    // Store in database
-    const result = await pool.query(`
-      INSERT INTO phone_numbers (user_id, phone_number, twilio_sid, status, created_at)
-      VALUES ($1, $2, $3, 'active', NOW())
-      RETURNING id, phone_number, status, created_at
-    `, [req.user.id, phoneNumber, purchasedNumber.sid]);
-
-    res.json({
-      success: true,
-      number: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Number purchase error:', error);
-    res.status(500).json({ error: 'Failed to purchase number' });
-  }
-});
-
-app.get('/api/numbers', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT id, phone_number, status, created_at
-      FROM phone_numbers 
-      WHERE user_id = $1 AND status != 'burned'
-      ORDER BY created_at DESC
-    `, [req.user.id]);
-
-    res.json({
-      success: true,
-      numbers: result.rows
-    });
-
-  } catch (error) {
-    console.error('Get numbers error:', error);
-    res.status(500).json({ error: 'Failed to fetch numbers' });
-  }
-});
-
-app.delete('/api/numbers/:id/burn', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const numberResult = await pool.query(
-      'SELECT phone_number, twilio_sid FROM phone_numbers WHERE id = $1 AND user_id = $2 AND status = $3',
-      [id, req.user.id, 'active']
-    );
-
-    if (numberResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Number not found or already burned' });
-    }
-
-    const { phone_number, twilio_sid } = numberResult.rows[0];
-
-    // Release number from Twilio
-    await twilioClient.incomingPhoneNumbers(twilio_sid).remove();
-
-    // Update database
-    await pool.query(`
-      UPDATE phone_numbers 
-      SET status = 'burned', updated_at = NOW() 
-      WHERE id = $1
-    `, [id]);
-
-    res.json({
-      success: true,
-      message: 'Number burned successfully'
-    });
-
-  } catch (error) {
-    console.error('Burn number error:', error);
-    res.status(500).json({ error: 'Failed to burn number' });
-  }
-});
-
-// ============================================================================
-// MESSAGING ENDPOINTS
-// ============================================================================
-
-app.post('/api/messages/send', authenticateToken, async (req, res) => {
-  try {
-    const { to, body, from } = req.body;
-
-    if (!to || !body) {
-      return res.status(400).json({ error: 'To and body are required' });
-    }
-
-    let fromNumber = from;
-    if (!fromNumber) {
-      // Get user's first active number
-      const activeNumberResult = await pool.query(`
-        SELECT phone_number 
-        FROM phone_numbers 
-        WHERE user_id = $1 AND status = 'active'
-        ORDER BY created_at ASC
-        LIMIT 1
-      `, [req.user.id]);
-
-      if (activeNumberResult.rows.length === 0) {
-        return res.status(400).json({ error: 'No active phone number found' });
-      }
-      fromNumber = activeNumberResult.rows[0].phone_number;
-    }
-
-    const message = await twilioClient.messages.create({
-      body: body,
-      from: fromNumber,
-      to: to
-    });
-
-    await pool.query(`
-      INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status, created_at)
-      VALUES ($1, $2, $3, $4, 'outbound', $5, $6, NOW())
-    `, [req.user.id, fromNumber, to, body, message.sid, message.status]);
-
-    res.json({
-      success: true,
-      messageSid: message.sid,
-      status: message.status
-    });
-
-  } catch (error) {
-    console.error('Send message error:', error);
-    res.status(500).json({ error: 'Failed to send message' });
-  }
-});
-
-app.get('/api/messages', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT id, from_number, to_number, body, direction, status, created_at
-      FROM messages 
-      WHERE user_id = $1
-      ORDER BY created_at DESC
-      LIMIT 50
-    `, [req.user.id]);
-
-    res.json({
-      success: true,
-      messages: result.rows
-    });
-
-  } catch (error) {
-    console.error('Get messages error:', error);
-    res.status(500).json({ error: 'Failed to fetch messages' });
-  }
-});
-
-// ============================================================================
-// CALLING ENDPOINTS
-// ============================================================================
-
-app.post('/api/calls/make', authenticateToken, async (req, res) => {
-  try {
-    const { to, from } = req.body;
-
-    if (!to) {
-      return res.status(400).json({ error: 'To number is required' });
-    }
-
-    let fromNumber = from;
-    if (!fromNumber) {
-      const activeNumberResult = await pool.query(`
-        SELECT phone_number 
-        FROM phone_numbers 
-        WHERE user_id = $1 AND status = 'active'
-        ORDER BY created_at ASC
-        LIMIT 1
-      `, [req.user.id]);
-
-      if (activeNumberResult.rows.length === 0) {
-        return res.status(400).json({ error: 'No active phone number found' });
-      }
-      fromNumber = activeNumberResult.rows[0].phone_number;
-    }
-
-    const call = await twilioClient.calls.create({
-      to: to,
-      from: fromNumber,
-      url: `${process.env.BASE_URL}/webhook/twilio/voice`
-    });
-
-    await pool.query(`
-      INSERT INTO calls (user_id, from_number, to_number, direction, twilio_sid, status, created_at)
-      VALUES ($1, $2, $3, 'outbound', $4, $5, NOW())
-    `, [req.user.id, fromNumber, to, call.sid, call.status]);
-
-    res.json({
-      success: true,
-      callSid: call.sid,
-      status: call.status
-    });
-
-  } catch (error) {
-    console.error('Make call error:', error);
-    res.status(500).json({ error: 'Failed to make call' });
-  }
-});
-
-// ============================================================================
-// BILLING ENDPOINTS  
-// ============================================================================
-
-app.get('/api/billing/subscription', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        u.*,
-        us.status as subscription_status,
-        sp.name as plan_name, 
-        sp.price_cents, 
-        sp.features
-      FROM users u
-      LEFT JOIN user_subscriptions us ON u.id = us.user_id
-      LEFT JOIN subscription_plans sp ON us.plan_id = sp.id
-      WHERE u.id = $1
-    `, [req.user.id]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const user = result.rows[0];
-
-    res.json({
-      subscription: {
-        planName: user.plan_name || 'Free',
-        price: user.price_cents ? user.price_cents / 100 : 0,
-        status: user.subscription_status || 'inactive',
-        features: user.features || []
-      },
-      stripeCustomerId: user.stripe_customer_id
-    });
-  } catch (error) {
-    console.error('Failed to fetch subscription:', error);
-    res.status(500).json({ error: 'Failed to fetch subscription info' });
-  }
-});
-
-// ============================================================================
-// WEBHOOK ENDPOINTS
-// ============================================================================
-
-app.post('/webhook/twilio/voice', (req, res) => {
-  const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say('Hello from Switchline! This call is being handled.');
-  
-  res.type('text/xml');
-  res.send(twiml.toString());
-});
-
-app.post('/webhook/twilio/sms', async (req, res) => {
-  try {
-    const { From, To, Body, MessageSid } = req.body;
-
-    const userResult = await pool.query(
-      'SELECT user_id FROM phone_numbers WHERE phone_number = $1 AND status = $2',
-      [To, 'active']
-    );
-
-    if (userResult.rows.length > 0) {
-      await pool.query(`
-        INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status, created_at)
-        VALUES ($1, $2, $3, $4, 'inbound', $5, 'received', NOW())
-      `, [userResult.rows[0].user_id, From, To, Body, MessageSid]);
-    }
-
-    res.status(200).send('OK');
-  } catch (error) {
-    console.error('SMS webhook error:', error);
-    res.status(500).send('Error');
-  }
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`Switchline backend server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+// Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -423,6 +18,11 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
+
+// Test database connection on startup
+pool.connect()
+  .then(() => console.log('✅ Database connected successfully'))
+  .catch(err => console.error('❌ Database connection error:', err));
 
 // Middleware
 app.use('/webhook', express.raw({type: 'application/json'})); // Raw middleware for webhook
@@ -574,7 +174,7 @@ app.get('/api/debug/test', (req, res) => {
   });
 });
 
-// FIXED: Debug endpoint to test webhook manually - removed salt column references
+// FIXED: Debug endpoint to test webhook manually - completely removed ON CONFLICT
 app.post('/api/debug/test-webhook', async (req, res) => {
   try {
     console.log('🧪 Manual webhook test triggered');
@@ -1338,4 +938,578 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const result = await pool.query(
+      'SELECT id, email, password_hash, status FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = result.rows[0];
+
+    if (user.status !== 'active') {
+      return res.status(401).json({ error: 'Account is not active' });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    await pool.query('UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email
+      }
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// ============================================================================
+// PHONE NUMBER ENDPOINTS
+// ============================================================================
+
+app.get('/api/numbers/search/:areaCode', async (req, res) => {
+  try {
+    const { areaCode } = req.params;
+
+    if (!areaCode || areaCode.length !== 3) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Valid 3-digit area code required' 
+      });
+    }
+
+    const availableNumbers = await twilioClient.availablePhoneNumbers('US')
+      .local
+      .list({
+        areaCode: areaCode,
+        limit: 10
+      });
+
+    const formattedNumbers = availableNumbers.map(number => ({
+      phoneNumber: number.phoneNumber,
+      friendlyName: number.friendlyName,
+      locality: number.locality,
+      region: number.region,
+      capabilities: number.capabilities
+    }));
+
+    res.json({
+      success: true,
+      numbers: formattedNumbers
+    });
+
+  } catch (error) {
+    console.error('Number search error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to search for numbers',
+      details: error.message
+    });
+  }
+});
+
+app.post('/api/numbers/purchase', authenticateToken, async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+
+    if (!phoneNumber) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    // Check user's plan limits
+    const userResult = await pool.query(`
+      SELECT COUNT(pn.id) as current_count
+      FROM phone_numbers pn 
+      WHERE pn.user_id = $1 AND pn.status != 'burned'
+    `, [req.user.id]);
+
+    const currentCount = parseInt(userResult.rows[0].current_count) || 0;
+    
+    // Basic limit check (can be enhanced with plan-based limits later)
+    if (currentCount >= 5) {
+      return res.status(400).json({ 
+        error: 'Phone number limit reached for your plan',
+        current: currentCount
+      });
+    }
+
+    // Purchase number through Twilio
+    const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
+      phoneNumber: phoneNumber,
+      voiceUrl: `${process.env.BASE_URL}/webhook/twilio/voice`,
+      smsUrl: `${process.env.BASE_URL}/webhook/twilio/sms`
+    });
+
+    // Store in database
+    const result = await pool.query(`
+      INSERT INTO phone_numbers (user_id, phone_number, twilio_sid, status, created_at)
+      VALUES ($1, $2, $3, 'active', NOW())
+      RETURNING id, phone_number, status, created_at
+    `, [req.user.id, phoneNumber, purchasedNumber.sid]);
+
+    res.json({
+      success: true,
+      number: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Number purchase error:', error);
+    res.status(500).json({ error: 'Failed to purchase number' });
+  }
+});
+
+app.get('/api/numbers', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, phone_number, status, created_at
+      FROM phone_numbers 
+      WHERE user_id = $1 AND status != 'burned'
+      ORDER BY created_at DESC
+    `, [req.user.id]);
+
+    res.json({
+      success: true,
+      numbers: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get numbers error:', error);
+    res.status(500).json({ error: 'Failed to fetch numbers' });
+  }
+});
+
+app.delete('/api/numbers/:id/burn', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const numberResult = await pool.query(
+      'SELECT phone_number, twilio_sid FROM phone_numbers WHERE id = $1 AND user_id = $2 AND status = $3',
+      [id, req.user.id, 'active']
+    );
+
+    if (numberResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Number not found or already burned' });
+    }
+
+    const { phone_number, twilio_sid } = numberResult.rows[0];
+
+    // Release number from Twilio
+    await twilioClient.incomingPhoneNumbers(twilio_sid).remove();
+
+    // Update database
+    await pool.query(`
+      UPDATE phone_numbers 
+      SET status = 'burned', updated_at = NOW() 
+      WHERE id = $1
+    `, [id]);
+
+    res.json({
+      success: true,
+      message: 'Number burned successfully'
+    });
+
+  } catch (error) {
+    console.error('Burn number error:', error);
+    res.status(500).json({ error: 'Failed to burn number' });
+  }
+});
+
+// ============================================================================
+// MESSAGING ENDPOINTS
+// ============================================================================
+
+app.post('/api/messages/send', authenticateToken, async (req, res) => {
+  try {
+    const { to, body, from } = req.body;
+
+    if (!to || !body) {
+      return res.status(400).json({ error: 'To and body are required' });
+    }
+
+    let fromNumber = from;
+    if (!fromNumber) {
+      // Get user's first active number
+      const activeNumberResult = await pool.query(`
+        SELECT phone_number 
+        FROM phone_numbers 
+        WHERE user_id = $1 AND status = 'active'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `, [req.user.id]);
+
+      if (activeNumberResult.rows.length === 0) {
+        return res.status(400).json({ error: 'No active phone number found' });
+      }
+      fromNumber = activeNumberResult.rows[0].phone_number;
+    }
+
+    const message = await twilioClient.messages.create({
+      body: body,
+      from: fromNumber,
+      to: to
+    });
+
+    await pool.query(`
+      INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status, created_at)
+      VALUES ($1, $2, $3, $4, 'outbound', $5, $6, NOW())
+    `, [req.user.id, fromNumber, to, body, message.sid, message.status]);
+
+    res.json({
+      success: true,
+      messageSid: message.sid,
+      status: message.status
+    });
+
+  } catch (error) {
+    console.error('Send message error:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+app.get('/api/messages', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, from_number, to_number, body, direction, status, created_at
+      FROM messages 
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 50
+    `, [req.user.id]);
+
+    res.json({
+      success: true,
+      messages: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get messages error:', error);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+// ============================================================================
+// CALLING ENDPOINTS
+// ============================================================================
+
+app.post('/api/calls/make', authenticateToken, async (req, res) => {
+  try {
+    const { to, from } = req.body;
+
+    if (!to) {
+      return res.status(400).json({ error: 'To number is required' });
+    }
+
+    let fromNumber = from;
+    if (!fromNumber) {
+      const activeNumberResult = await pool.query(`
+        SELECT phone_number 
+        FROM phone_numbers 
+        WHERE user_id = $1 AND status = 'active'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `, [req.user.id]);
+
+      if (activeNumberResult.rows.length === 0) {
+        return res.status(400).json({ error: 'No active phone number found' });
+      }
+      fromNumber = activeNumberResult.rows[0].phone_number;
+    }
+
+    const call = await twilioClient.calls.create({
+      to: to,
+      from: fromNumber,
+      url: `${process.env.BASE_URL}/webhook/twilio/voice`
+    });
+
+    await pool.query(`
+      INSERT INTO calls (user_id, from_number, to_number, direction, twilio_sid, status, created_at)
+      VALUES ($1, $2, $3, 'outbound', $4, $5, NOW())
+    `, [req.user.id, fromNumber, to, call.sid, call.status]);
+
+    res.json({
+      success: true,
+      callSid: call.sid,
+      status: call.status
+    });
+
+  } catch (error) {
+    console.error('Make call error:', error);
+    res.status(500).json({ error: 'Failed to make call' });
+  }
+});
+
+app.get('/api/calls', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, from_number, to_number, direction, status, created_at
+      FROM calls 
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 50
+    `, [req.user.id]);
+
+    res.json({
+      success: true,
+      calls: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get calls error:', error);
+    res.status(500).json({ error: 'Failed to fetch calls' });
+  }
+});
+
+// ============================================================================
+// BILLING ENDPOINTS  
+// ============================================================================
+
+app.get('/api/billing/subscription', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        u.*,
+        us.status as subscription_status,
+        sp.name as plan_name, 
+        sp.price_cents, 
+        sp.features
+      FROM users u
+      LEFT JOIN user_subscriptions us ON u.id = us.user_id
+      LEFT JOIN subscription_plans sp ON us.plan_id = sp.id
+      WHERE u.id = $1
+    `, [req.user.id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = result.rows[0];
+
+    res.json({
+      subscription: {
+        planName: user.plan_name || 'Free',
+        price: user.price_cents ? user.price_cents / 100 : 0,
+        status: user.subscription_status || 'inactive',
+        features: user.features || []
+      },
+      stripeCustomerId: user.stripe_customer_id
+    });
+  } catch (error) {
+    console.error('Failed to fetch subscription:', error);
+    res.status(500).json({ error: 'Failed to fetch subscription info' });
+  }
+});
+
+app.get('/api/billing/history', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        event_type,
+        amount,
+        currency,
+        stripe_invoice_id,
+        created_at
+      FROM billing_events 
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 20
+    `, [req.user.id]);
+
+    res.json({
+      success: true,
+      billing_history: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get billing history error:', error);
+    res.status(500).json({ error: 'Failed to fetch billing history' });
+  }
+});
+
+// ============================================================================
+// WEBHOOK ENDPOINTS
+// ============================================================================
+
+app.post('/webhook/twilio/voice', (req, res) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+  twiml.say('Hello from Switchline! This call is being handled.');
+  
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+app.post('/webhook/twilio/sms', async (req, res) => {
+  try {
+    const { From, To, Body, MessageSid } = req.body;
+
+    const userResult = await pool.query(
+      'SELECT user_id FROM phone_numbers WHERE phone_number = $1 AND status = $2',
+      [To, 'active']
+    );
+
+    if (userResult.rows.length > 0) {
+      await pool.query(`
+        INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status, created_at)
+        VALUES ($1, $2, $3, $4, 'inbound', $5, 'received', NOW())
+      `, [userResult.rows[0].user_id, From, To, Body, MessageSid]);
+    }
+
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('SMS webhook error:', error);
+    res.status(500).send('Error');
+  }
+});
+
+// ============================================================================
+// CONVERSATIONS ENDPOINTS
+// ============================================================================
+
+app.get('/api/conversations', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT DISTINCT
+        CASE 
+          WHEN direction = 'inbound' THEN from_number
+          ELSE to_number
+        END as contact_number,
+        MAX(created_at) as last_message_time,
+        COUNT(*) as message_count
+      FROM messages 
+      WHERE user_id = $1
+      GROUP BY contact_number
+      ORDER BY last_message_time DESC
+      LIMIT 20
+    `, [req.user.id]);
+
+    res.json({
+      success: true,
+      conversations: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get conversations error:', error);
+    res.status(500).json({ error: 'Failed to fetch conversations' });
+  }
+});
+
+app.get('/api/conversations/:phoneNumber', authenticateToken, async (req, res) => {
+  try {
+    const { phoneNumber } = req.params;
+
+    const result = await pool.query(`
+      SELECT id, from_number, to_number, body, direction, status, created_at
+      FROM messages 
+      WHERE user_id = $1 
+      AND (from_number = $2 OR to_number = $2)
+      ORDER BY created_at ASC
+    `, [req.user.id, phoneNumber]);
+
+    res.json({
+      success: true,
+      messages: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get conversation error:', error);
+    res.status(500).json({ error: 'Failed to fetch conversation' });
+  }
+});
+
+// ============================================================================
+// ADMIN ENDPOINTS
+// ============================================================================
+
+app.get('/api/admin/stats', authenticateToken, async (req, res) => {
+  try {
+    // Basic admin check (enhance with proper role checking)
+    const userCheck = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+    if (userCheck.rows.length === 0 || !userCheck.rows[0].email.includes('admin')) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const stats = await Promise.all([
+      pool.query('SELECT COUNT(*) as count FROM users'),
+      pool.query('SELECT COUNT(*) as count FROM phone_numbers WHERE status = $1', ['active']),
+      pool.query('SELECT COUNT(*) as count FROM messages'),
+      pool.query('SELECT COUNT(*) as count FROM calls'),
+      pool.query('SELECT COUNT(*) as count FROM user_subscriptions WHERE status = $1', ['active'])
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        total_users: parseInt(stats[0].rows[0].count),
+        active_numbers: parseInt(stats[1].rows[0].count),
+        total_messages: parseInt(stats[2].rows[0].count),
+        total_calls: parseInt(stats[3].rows[0].count),
+        active_subscriptions: parseInt(stats[4].rows[0].count)
+      }
+    });
+
+  } catch (error) {
+    console.error('Get admin stats error:', error);
+    res.status(500).json({ error: 'Failed to fetch admin stats' });
+  }
+});
+
+// ============================================================================
+// SECURITY ENDPOINTS
+// ============================================================================
+
+app.post('/api/security/log-event', authenticateToken, async (req, res) => {
+  try {
+    const { event_type, details } = req.body;
+
+    await pool.query(`
+      INSERT INTO security_events (user_id, event_type, details, ip_address, user_agent, created_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+    `, [
+      req.user.id,
+      event_type,
+      details,
+      req.ip || req.connection.remoteAddress,
+      req.headers['user-agent']
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Security event logged'
+    });
+
+  } catch (error) {
+    console.error('Log security event error:', error);
+    res.status(500).json({ error: 'Failed to log security event' });
+  }
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Switchline backend server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});
