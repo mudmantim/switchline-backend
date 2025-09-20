@@ -164,6 +164,282 @@ app.post('/api/auth/register', async (req, res) => {
       [email, passwordHash, salt, firstName, lastName]
     );
 
+// =====================================
+// STRIPE WEBHOOK INTEGRATION
+// =====================================
+
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
+// Stripe webhook endpoint - handles subscription events
+app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    // Verify webhook signature
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    console.log('✅ Webhook signature verified:', event.type);
+  } catch (err) {
+    console.log('❌ Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // Handle the event
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed':
+        await handleCheckoutCompleted(event.data.object);
+        break;
+      
+      case 'customer.subscription.created':
+        await handleSubscriptionCreated(event.data.object);
+        break;
+      
+      case 'customer.subscription.updated':
+        await handleSubscriptionUpdated(event.data.object);
+        break;
+      
+      case 'customer.subscription.deleted':
+        await handleSubscriptionDeleted(event.data.object);
+        break;
+      
+      case 'invoice.payment_succeeded':
+        await handlePaymentSucceeded(event.data.object);
+        break;
+      
+      case 'invoice.payment_failed':
+        await handlePaymentFailed(event.data.object);
+        break;
+      
+      default:
+        console.log(`Unhandled event type: ${event.type}`);
+    }
+
+    res.json({received: true});
+  } catch (error) {
+    console.error('❌ Webhook handler error:', error);
+    res.status(500).json({error: 'Webhook handler failed'});
+  }
+});
+
+// =====================================
+// STRIPE EVENT HANDLERS
+// =====================================
+
+async function handleCheckoutCompleted(session) {
+  console.log('🎉 Checkout completed:', session.id);
+  
+  try {
+    // Get the subscription details
+    const subscription = await stripe.subscriptions.retrieve(session.subscription);
+    const customer = await stripe.customers.retrieve(session.customer);
+    
+    // Find or create user
+    let user = await pool.query('SELECT * FROM users WHERE email = $1', [customer.email]);
+    
+    if (user.rows.length === 0) {
+      // Create new user if doesn't exist
+      const newUser = await pool.query(`
+        INSERT INTO users (email, stripe_customer_id, created_at, updated_at) 
+        VALUES ($1, $2, NOW(), NOW()) 
+        RETURNING *
+      `, [customer.email, customer.id]);
+      user = newUser;
+    } else {
+      // Update existing user with customer ID
+      await pool.query(`
+        UPDATE users 
+        SET stripe_customer_id = $1, updated_at = NOW() 
+        WHERE email = $2
+      `, [customer.id, customer.email]);
+    }
+    
+    // Create subscription record
+    await createUserSubscription(subscription, customer.email);
+    
+  } catch (error) {
+    console.error('❌ Error handling checkout completion:', error);
+  }
+}
+
+async function handleSubscriptionCreated(subscription) {
+  console.log('📝 Subscription created:', subscription.id);
+  
+  try {
+    const customer = await stripe.customers.retrieve(subscription.customer);
+    await createUserSubscription(subscription, customer.email);
+  } catch (error) {
+    console.error('❌ Error handling subscription creation:', error);
+  }
+}
+
+async function handleSubscriptionUpdated(subscription) {
+  console.log('🔄 Subscription updated:', subscription.id);
+  
+  try {
+    await pool.query(`
+      UPDATE user_subscriptions 
+      SET 
+        status = $1,
+        current_period_start = $2,
+        current_period_end = $3,
+        updated_at = NOW()
+      WHERE stripe_subscription_id = $4
+    `, [
+      subscription.status,
+      new Date(subscription.current_period_start * 1000),
+      new Date(subscription.current_period_end * 1000),
+      subscription.id
+    ]);
+    
+    console.log('✅ Subscription updated in database');
+  } catch (error) {
+    console.error('❌ Error updating subscription:', error);
+  }
+}
+
+async function handleSubscriptionDeleted(subscription) {
+  console.log('🗑️ Subscription deleted:', subscription.id);
+  
+  try {
+    await pool.query(`
+      UPDATE user_subscriptions 
+      SET status = 'canceled', updated_at = NOW() 
+      WHERE stripe_subscription_id = $1
+    `, [subscription.id]);
+    
+    console.log('✅ Subscription canceled in database');
+  } catch (error) {
+    console.error('❌ Error canceling subscription:', error);
+  }
+}
+
+async function handlePaymentSucceeded(invoice) {
+  console.log('💰 Payment succeeded:', invoice.id);
+  
+  if (invoice.subscription) {
+    try {
+      // Record billing event
+      await pool.query(`
+        INSERT INTO billing_events (
+          user_id, 
+          event_type, 
+          amount, 
+          currency, 
+          stripe_invoice_id, 
+          created_at
+        ) VALUES (
+          (SELECT id FROM users WHERE stripe_customer_id = $1),
+          'payment_succeeded',
+          $2,
+          $3,
+          $4,
+          NOW()
+        )
+      `, [invoice.customer, invoice.amount_paid, invoice.currency, invoice.id]);
+      
+      console.log('✅ Payment recorded in billing_events');
+    } catch (error) {
+      console.error('❌ Error recording payment:', error);
+    }
+  }
+}
+
+async function handlePaymentFailed(invoice) {
+  console.log('❌ Payment failed:', invoice.id);
+  
+  try {
+    // Record failed payment
+    await pool.query(`
+      INSERT INTO billing_events (
+        user_id, 
+        event_type, 
+        amount, 
+        currency, 
+        stripe_invoice_id, 
+        created_at
+      ) VALUES (
+        (SELECT id FROM users WHERE stripe_customer_id = $1),
+        'payment_failed',
+        $2,
+        $3,
+        $4,
+        NOW()
+      )
+    `, [invoice.customer, invoice.amount_due, invoice.currency, invoice.id]);
+    
+    console.log('✅ Failed payment recorded');
+  } catch (error) {
+    console.error('❌ Error recording failed payment:', error);
+  }
+}
+
+// Helper function to create user subscription
+async function createUserSubscription(subscription, userEmail) {
+  try {
+    // Get plan details from Stripe price
+    const price = await stripe.prices.retrieve(subscription.items.data[0].price.id);
+    
+    // Map Stripe price to our plan
+    let planName = 'Basic';
+    if (price.unit_amount === 999) planName = 'Pro';
+    if (price.unit_amount === 2999) planName = 'Enterprise';
+    
+    // Get our internal plan ID
+    const planResult = await pool.query('SELECT id FROM subscription_plans WHERE name = $1', [planName]);
+    
+    if (planResult.rows.length === 0) {
+      throw new Error(`Plan not found: ${planName}`);
+    }
+    
+    const planId = planResult.rows[0].id;
+    
+    // Create or update subscription
+    await pool.query(`
+      INSERT INTO user_subscriptions (
+        user_id,
+        plan_id,
+        stripe_subscription_id,
+        stripe_customer_id,
+        status,
+        current_period_start,
+        current_period_end,
+        created_at,
+        updated_at
+      ) VALUES (
+        (SELECT id FROM users WHERE email = $1),
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        NOW(),
+        NOW()
+      ) ON CONFLICT (user_id) DO UPDATE SET
+        plan_id = $2,
+        stripe_subscription_id = $3,
+        status = $5,
+        current_period_start = $6,
+        current_period_end = $7,
+        updated_at = NOW()
+    `, [
+      userEmail,
+      planId,
+      subscription.id,
+      subscription.customer,
+      subscription.status,
+      new Date(subscription.current_period_start * 1000),
+      new Date(subscription.current_period_end * 1000)
+    ]);
+    
+    console.log(`✅ User subscription created/updated: ${userEmail} -> ${planName}`);
+  } catch (error) {
+    console.error('❌ Error creating user subscription:', error);
+    throw error;
+  }
+}
+
     const user = result.rows[0];
 
     const token = jwt.sign(
