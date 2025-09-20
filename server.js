@@ -217,7 +217,7 @@ app.post('/api/debug/test-webhook', async (req, res) => {
       if (user.rows.length === 0) {
         console.log('👤 Creating test user...');
         const newUser = await pool.query(`
-  INSERT INTO users (email, stripe_customer_id, password_hash, salt, first_name, last_name, status, created_at, updated_at) 
+  INSERT INTO users (email, stripe_customer_id, status, created_at, updated_at) 
   VALUES ($1, $2, 'webhook_user', 'no_salt', 'Webhook', 'Test', 'active', NOW(), NOW()) 
   RETURNING *
 `, [mockCustomer.email, mockCustomer.id]);
