@@ -120,7 +120,7 @@ app.get('/api/debug/database', async (req, res) => {
       WHERE table_schema = 'public' 
       ORDER BY table_name;
     `);
-    
+       
     const planCount = await pool.query('SELECT COUNT(*) FROM subscription_plans');
     
     res.json({
@@ -518,7 +518,7 @@ app.get('/api/subscription-status/:email', async (req, res) => {
         us.status,
         us.current_period_end,
         sp.name as plan_name,
-        sp.price,
+        sp.price_cents,
         sp.features
       FROM users u
       LEFT JOIN user_subscriptions us ON u.id = us.user_id
@@ -552,7 +552,7 @@ app.get('/api/subscription-status/:email', async (req, res) => {
       subscription: {
         status: user.status,
         planName: user.plan_name,
-        price: user.price,
+        price: user.price_cents,
         features: user.features,
         currentPeriodEnd: user.current_period_end,
         isActive: isActive
@@ -621,7 +621,7 @@ app.post('/api/cancel-subscription', async (req, res) => {
 app.get('/api/test-subscription-system', async (req, res) => {
   try {
     // Test database connections
-    const plans = await pool.query('SELECT * FROM subscription_plans ORDER BY price');
+    const plans = await pool.query('SELECT * FROM subscription_plans ORDER BY price_cents');
     const userCount = await pool.query('SELECT COUNT(*) FROM users');
     const subscriptionCount = await pool.query('SELECT COUNT(*) FROM user_subscriptions');
     
