@@ -138,6 +138,28 @@ app.get('/api/debug/database', async (req, res) => {
   }
 });
 
+// Temporary endpoint to check subscription_plans schema
+app.get('/api/debug/subscription-plans-schema', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'subscription_plans' 
+      ORDER BY ordinal_position;
+    `);
+    
+    const sampleData = await pool.query('SELECT * FROM subscription_plans LIMIT 1');
+    
+    res.json({
+      success: true,
+      columns: result.rows,
+      sample_data: sampleData.rows[0]
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // =====================================
 // STRIPE WEBHOOK INTEGRATION
 // =====================================
