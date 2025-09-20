@@ -672,7 +672,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
         },
       ],
       mode: 'subscription',
-      success_url: `${process.env.FRONTEND_URL || 'https://switchline.app'}/success?session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `https://example.com/?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONTEND_URL || 'https://switchline.app'}/pricing`,
       metadata: {
         planName: planName || 'Unknown'
