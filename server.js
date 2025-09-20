@@ -217,8 +217,8 @@ app.post('/api/debug/test-webhook', async (req, res) => {
       if (user.rows.length === 0) {
         console.log('👤 Creating test user...');
         const newUser = await pool.query(`
-          INSERT INTO users (email, password_hash, salt, first_name, last_name, stripe_customer_id, status, created_at, updated_at) 
-          VALUES ($1, 'webhook_user', 'no_salt', 'Webhook', 'Test', $2, 'active', NOW(), NOW()) 
+          INSERT INTO users (email, password_hash, stripe_customer_id, status, created_at, updated_at) 
+          VALUES ($1, 'webhook_user', $2, 'active', NOW(), NOW()) 
           RETURNING *
         `, [mockCustomer.email, mockCustomer.id]);
         user = newUser;
@@ -423,10 +423,10 @@ async function handleCheckoutCompleted(session) {
     let user = await pool.query('SELECT * FROM users WHERE email = $1', [customer.email]);
     
     if (user.rows.length === 0) {
-      // Create new user if doesn't exist - FIXED SQL SYNTAX
+      // Create new user if doesn't exist - FIXED SQL SYNTAX (no salt/name columns)
       const newUser = await pool.query(`
-        INSERT INTO users (email, password_hash, salt, first_name, last_name, stripe_customer_id, status, created_at, updated_at) 
-        VALUES ($1, 'webhook_user', 'no_salt', 'Webhook', 'User', $2, 'active', NOW(), NOW()) 
+        INSERT INTO users (email, password_hash, stripe_customer_id, status, created_at, updated_at) 
+        VALUES ($1, 'webhook_user', $2, 'active', NOW(), NOW()) 
         RETURNING *
       `, [customer.email, customer.id]);
       user = newUser;
