@@ -32,6 +32,34 @@ app.use(cors({
   credentials: true
 }));
 
+// ============================================================================
+// DUAL-MODE UTILITIES
+// ============================================================================
+
+// Utility function to detect if request is in test mode
+const isTestMode = (req) => {
+  // Check URL parameters
+  if (req.query.test === 'true') return true;
+  if (req.query.live === 'true') return false;
+  
+  // Check headers
+  if (req.headers['x-test-mode'] === 'true') return true;
+  if (req.headers['x-live-mode'] === 'true') return false;
+  
+  // Check request body
+  if (req.body && req.body.testMode === true) return true;
+  if (req.body && req.body.liveMode === true) return false;
+  
+  // Default to test mode for safety
+  return true;
+};
+
+// Utility function to log mode-specific actions
+const logModeAction = (action, testMode, details = {}) => {
+  const prefix = testMode ? '🧪 TEST:' : '🔴 LIVE:';
+  console.log(`${prefix} ${action}`, details);
+};
+
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -86,15 +114,18 @@ app.get('/health', (req, res) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     service: 'Switchline Backend',
-    version: '1.0.0'
+    version: '1.0.0',
+    dual_mode_support: true
   });
 });
 
 app.get('/test-basic', (req, res) => {
+  const testMode = isTestMode(req);
   res.json({
     message: 'Server is working!',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    mode: testMode ? 'test' : 'production'
   });
 });
 
@@ -105,7 +136,8 @@ app.get('/api/twilio/test', async (req, res) => {
       success: true,
       message: 'Twilio connection successful',
       accountSid: account.sid,
-      accountStatus: account.status
+      accountStatus: account.status,
+      dual_mode_ready: true
     });
   } catch (error) {
     res.status(500).json({
@@ -132,7 +164,8 @@ app.get('/api/debug/database', async (req, res) => {
       success: true,
       tables: result.rows.map(row => row.table_name),
       subscription_plans: parseInt(planCount.rows[0].count),
-      database_ready: result.rows.length > 0
+      database_ready: result.rows.length > 0,
+      dual_mode_support: true
     });
   } catch (error) {
     res.status(500).json({
@@ -379,6 +412,176 @@ app.get('/api/debug/subscription-data', async (req, res) => {
       error: error.message
     });
   }
+});
+
+// ============================================================================
+// DUAL-MODE ENDPOINTS
+// ============================================================================
+
+// NEW: Test Purchase Endpoint (Free - No actual Twilio purchase)
+app.post('/api/numbers/test-purchase', async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+    const testMode = true; // Always test mode for this endpoint
+
+    logModeAction('Number test purchase request', testMode, { phoneNumber });
+
+    if (!phoneNumber) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    // Simulate delay for realism
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Return success without actually purchasing
+    res.json({
+      success: true,
+      message: 'Test purchase simulation completed',
+      number: {
+        phoneNumber: phoneNumber,
+        status: 'test_active',
+        testMode: true,
+        created_at: new Date().toISOString(),
+        cost: 0,
+        monthly_cost: 0
+      },
+      warning: 'This was a test purchase. No actual charges applied.'
+    });
+
+    logModeAction('Test purchase completed successfully', testMode, { phoneNumber });
+
+  } catch (error) {
+    console.error('Test purchase error:', error);
+    res.status(500).json({ 
+      error: 'Test purchase failed',
+      details: error.message,
+      testMode: true
+    });
+  }
+});
+
+// NEW: Enhanced Messages Send with Dual-Mode Support
+app.post('/api/messages/send', async (req, res) => {
+  try {
+    const { to, body, from, testMode: requestedTestMode } = req.body;
+    const testMode = requestedTestMode !== undefined ? requestedTestMode : isTestMode(req);
+
+    logModeAction('SMS send request', testMode, { to, from, bodyLength: body?.length });
+
+    if (!to || !body) {
+      return res.status(400).json({ error: 'To and body are required' });
+    }
+
+    if (testMode) {
+      // TEST MODE - Simulate SMS without sending
+      console.log(`🧪 TEST SMS: From ${from || 'auto'} to ${to}: ${body}`);
+      
+      // Simulate delay
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      res.json({
+        success: true,
+        message: 'Test SMS simulation completed',
+        messageSid: 'test_msg_' + Date.now(),
+        status: 'test_sent',
+        testMode: true,
+        cost: 0,
+        details: {
+          from: from || '(test-number)',
+          to: to,
+          body: body,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+      logModeAction('Test SMS sent successfully', testMode);
+      return;
+    }
+
+    // PRODUCTION MODE - Real SMS (existing logic)
+    let fromNumber = from;
+    if (!fromNumber && req.user) {
+      // Get user's first active number
+      const activeNumberResult = await pool.query(`
+        SELECT phone_number 
+        FROM phone_numbers 
+        WHERE user_id = $1 AND status = 'active'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `, [req.user.id]);
+
+      if (activeNumberResult.rows.length === 0) {
+        return res.status(400).json({ error: 'No active phone number found' });
+      }
+      fromNumber = activeNumberResult.rows[0].phone_number;
+    }
+
+    const message = await twilioClient.messages.create({
+      body: body,
+      from: fromNumber,
+      to: to
+    });
+
+    if (req.user) {
+      await pool.query(`
+        INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status, created_at)
+        VALUES ($1, $2, $3, $4, 'outbound', $5, $6, NOW())
+      `, [req.user.id, fromNumber, to, body, message.sid, message.status]);
+    }
+
+    res.json({
+      success: true,
+      messageSid: message.sid,
+      status: message.status,
+      testMode: false,
+      cost: 0.0075 // Approximate Twilio SMS cost
+    });
+
+    logModeAction('Production SMS sent successfully', testMode, { sid: message.sid });
+
+  } catch (error) {
+    console.error('Send message error:', error);
+    res.status(500).json({ 
+      error: 'Failed to send message',
+      details: error.message,
+      testMode: isTestMode(req)
+    });
+  }
+});
+
+// NEW: Mode Detection Endpoint
+app.get('/api/mode/detect', (req, res) => {
+  const testMode = isTestMode(req);
+  res.json({
+    testMode: testMode,
+    productionMode: !testMode,
+    detectionMethod: 'url_parameters_or_headers',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// NEW: Mode Configuration Endpoint
+app.get('/api/mode/config', (req, res) => {
+  const testMode = isTestMode(req);
+  res.json({
+    currentMode: testMode ? 'test' : 'production',
+    settings: {
+      showCosts: !testMode,
+      enableRealPurchases: !testMode,
+      showWarnings: !testMode,
+      simulateDelay: testMode
+    },
+    endpoints: {
+      test: {
+        numberPurchase: '/api/numbers/test-purchase',
+        messageSend: '/api/messages/send?test=true'
+      },
+      production: {
+        numberPurchase: '/api/numbers/purchase',
+        messageSend: '/api/messages/send?live=true'
+      }
+    }
+  });
 });
 
 // =====================================
@@ -874,6 +1077,7 @@ app.get('/api/test-subscription-system', async (req, res) => {
       },
       stripe_configured: !!process.env.STRIPE_SECRET_KEY,
       webhook_configured: !!process.env.STRIPE_WEBHOOK_SECRET,
+      dual_mode_support: true,
       test_price_ids: {
         basic: 'price_1S8gJfLz1CB1flJ3nYeAtyOt',
         pro: 'price_1S8gJmLz1CB1flJ3vWyz737X', 
@@ -990,12 +1194,15 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ============================================================================
-// PHONE NUMBER ENDPOINTS
+// PHONE NUMBER ENDPOINTS (Enhanced with Dual-Mode)
 // ============================================================================
 
 app.get('/api/numbers/search/:areaCode', async (req, res) => {
   try {
     const { areaCode } = req.params;
+    const testMode = isTestMode(req);
+
+    logModeAction('Number search request', testMode, { areaCode });
 
     if (!areaCode || areaCode.length !== 3) {
       return res.status(400).json({ 
@@ -1016,30 +1223,57 @@ app.get('/api/numbers/search/:areaCode', async (req, res) => {
       friendlyName: number.friendlyName,
       locality: number.locality,
       region: number.region,
-      capabilities: number.capabilities
+      capabilities: number.capabilities,
+      testMode: testMode,
+      cost: testMode ? 0 : 1.15,
+      monthlyCost: testMode ? 0 : 1.00
     }));
 
     res.json({
       success: true,
-      numbers: formattedNumbers
+      numbers: formattedNumbers,
+      testMode: testMode,
+      message: testMode ? 'Test search results - no charges apply' : 'Live search results'
     });
+
+    logModeAction('Number search completed', testMode, { found: formattedNumbers.length });
 
   } catch (error) {
     console.error('Number search error:', error);
     res.status(500).json({ 
       success: false,
       error: 'Failed to search for numbers',
-      details: error.message
+      details: error.message,
+      testMode: isTestMode(req)
     });
   }
 });
 
-app.post('/api/numbers/purchase', authenticateToken, async (req, res) => {
+// ENHANCED: Purchase endpoint now supports dual-mode via URL params
+app.post('/api/numbers/purchase', async (req, res) => {
   try {
     const { phoneNumber } = req.body;
+    const testMode = isTestMode(req);
+
+    logModeAction('Number purchase request', testMode, { phoneNumber });
 
     if (!phoneNumber) {
       return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    if (testMode) {
+      // Redirect to test purchase endpoint
+      return res.json({
+        success: true,
+        message: 'Redirected to test purchase',
+        redirect: '/api/numbers/test-purchase',
+        testMode: true
+      });
+    }
+
+    // Require authentication for production purchases
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required for production purchases' });
     }
 
     // Check user's plan limits
@@ -1075,12 +1309,21 @@ app.post('/api/numbers/purchase', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      number: result.rows[0]
+      number: result.rows[0],
+      testMode: false,
+      cost: 1.15,
+      monthlyCost: 1.00
     });
+
+    logModeAction('Production number purchased successfully', testMode, { sid: purchasedNumber.sid });
 
   } catch (error) {
     console.error('Number purchase error:', error);
-    res.status(500).json({ error: 'Failed to purchase number' });
+    res.status(500).json({ 
+      error: 'Failed to purchase number',
+      details: error.message,
+      testMode: isTestMode(req)
+    });
   }
 });
 
@@ -1107,6 +1350,9 @@ app.get('/api/numbers', authenticateToken, async (req, res) => {
 app.delete('/api/numbers/:id/burn', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const testMode = isTestMode(req);
+
+    logModeAction('Burn number request', testMode, { numberId: id });
 
     const numberResult = await pool.query(
       'SELECT phone_number, twilio_sid FROM phone_numbers WHERE id = $1 AND user_id = $2 AND status = $3',
@@ -1119,8 +1365,10 @@ app.delete('/api/numbers/:id/burn', authenticateToken, async (req, res) => {
 
     const { phone_number, twilio_sid } = numberResult.rows[0];
 
-    // Release number from Twilio
-    await twilioClient.incomingPhoneNumbers(twilio_sid).remove();
+    if (!testMode && twilio_sid && twilio_sid !== 'test_sid') {
+      // Release number from Twilio (production only)
+      await twilioClient.incomingPhoneNumbers(twilio_sid).remove();
+    }
 
     // Update database
     await pool.query(`
@@ -1131,66 +1379,24 @@ app.delete('/api/numbers/:id/burn', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Number burned successfully'
+      message: testMode ? 'Number test burn completed' : 'Number burned successfully',
+      testMode: testMode
     });
+
+    logModeAction('Number burned successfully', testMode, { phoneNumber: phone_number });
 
   } catch (error) {
     console.error('Burn number error:', error);
-    res.status(500).json({ error: 'Failed to burn number' });
+    res.status(500).json({ 
+      error: 'Failed to burn number',
+      testMode: isTestMode(req)
+    });
   }
 });
 
 // ============================================================================
-// MESSAGING ENDPOINTS
+// MESSAGING ENDPOINTS (Already enhanced above)
 // ============================================================================
-
-app.post('/api/messages/send', authenticateToken, async (req, res) => {
-  try {
-    const { to, body, from } = req.body;
-
-    if (!to || !body) {
-      return res.status(400).json({ error: 'To and body are required' });
-    }
-
-    let fromNumber = from;
-    if (!fromNumber) {
-      // Get user's first active number
-      const activeNumberResult = await pool.query(`
-        SELECT phone_number 
-        FROM phone_numbers 
-        WHERE user_id = $1 AND status = 'active'
-        ORDER BY created_at ASC
-        LIMIT 1
-      `, [req.user.id]);
-
-      if (activeNumberResult.rows.length === 0) {
-        return res.status(400).json({ error: 'No active phone number found' });
-      }
-      fromNumber = activeNumberResult.rows[0].phone_number;
-    }
-
-    const message = await twilioClient.messages.create({
-      body: body,
-      from: fromNumber,
-      to: to
-    });
-
-    await pool.query(`
-      INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status, created_at)
-      VALUES ($1, $2, $3, $4, 'outbound', $5, $6, NOW())
-    `, [req.user.id, fromNumber, to, body, message.sid, message.status]);
-
-    res.json({
-      success: true,
-      messageSid: message.sid,
-      status: message.status
-    });
-
-  } catch (error) {
-    console.error('Send message error:', error);
-    res.status(500).json({ error: 'Failed to send message' });
-  }
-});
 
 app.get('/api/messages', authenticateToken, async (req, res) => {
   try {
@@ -1220,9 +1426,27 @@ app.get('/api/messages', authenticateToken, async (req, res) => {
 app.post('/api/calls/make', authenticateToken, async (req, res) => {
   try {
     const { to, from } = req.body;
+    const testMode = isTestMode(req);
+
+    logModeAction('Make call request', testMode, { to, from });
 
     if (!to) {
       return res.status(400).json({ error: 'To number is required' });
+    }
+
+    if (testMode) {
+      // Test mode - simulate call
+      res.json({
+        success: true,
+        callSid: 'test_call_' + Date.now(),
+        status: 'test_initiated',
+        testMode: true,
+        cost: 0,
+        message: 'Test call simulation completed'
+      });
+      
+      logModeAction('Test call simulated', testMode);
+      return;
     }
 
     let fromNumber = from;
@@ -1255,12 +1479,19 @@ app.post('/api/calls/make', authenticateToken, async (req, res) => {
     res.json({
       success: true,
       callSid: call.sid,
-      status: call.status
+      status: call.status,
+      testMode: false,
+      estimatedCost: 0.013 // per minute
     });
+
+    logModeAction('Production call initiated', testMode, { sid: call.sid });
 
   } catch (error) {
     console.error('Make call error:', error);
-    res.status(500).json({ error: 'Failed to make call' });
+    res.status(500).json({ 
+      error: 'Failed to make call',
+      testMode: isTestMode(req)
+    });
   }
 });
 
@@ -1352,12 +1583,18 @@ app.get('/api/billing/history', authenticateToken, async (req, res) => {
 });
 
 // ============================================================================
-// WEBHOOK ENDPOINTS
+// WEBHOOK ENDPOINTS (Enhanced for dual-mode)
 // ============================================================================
 
 app.post('/webhook/twilio/voice', (req, res) => {
+  const testMode = isTestMode(req);
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say('Hello from Switchline! This call is being handled.');
+  
+  if (testMode) {
+    twiml.say('Hello from Switchline Test Mode! This is a simulated call.');
+  } else {
+    twiml.say('Hello from Switchline! This call is being handled.');
+  }
   
   res.type('text/xml');
   res.send(twiml.toString());
@@ -1366,6 +1603,9 @@ app.post('/webhook/twilio/voice', (req, res) => {
 app.post('/webhook/twilio/sms', async (req, res) => {
   try {
     const { From, To, Body, MessageSid } = req.body;
+    const testMode = isTestMode(req);
+
+    logModeAction('Received SMS webhook', testMode, { from: From, to: To });
 
     const userResult = await pool.query(
       'SELECT user_id FROM phone_numbers WHERE phone_number = $1 AND status = $2',
@@ -1375,8 +1615,8 @@ app.post('/webhook/twilio/sms', async (req, res) => {
     if (userResult.rows.length > 0) {
       await pool.query(`
         INSERT INTO messages (user_id, from_number, to_number, body, direction, twilio_sid, status, created_at)
-        VALUES ($1, $2, $3, $4, 'inbound', $5, 'received', NOW())
-      `, [userResult.rows[0].user_id, From, To, Body, MessageSid]);
+        VALUES ($1, $2, $3, $4, 'inbound', $5, $6, NOW())
+      `, [userResult.rows[0].user_id, From, To, Body, MessageSid, testMode ? 'test_received' : 'received']);
     }
 
     res.status(200).send('OK');
@@ -1512,4 +1752,7 @@ app.post('/api/security/log-event', authenticateToken, async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Switchline backend server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`✅ Dual-mode support enabled`);
+  console.log(`🧪 Test endpoints available at /api/*/test-* routes`);
+  console.log(`🔴 Production endpoints available with ?live=true parameter`);
 });
