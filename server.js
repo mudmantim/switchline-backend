@@ -115,7 +115,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     service: 'Switchline Backend',
     version: '1.0.0',
-    dual_mode_support: true
+    dual_mode_support: true,
+    apps: ['switchline', 'streakfit']
   });
 });
 
@@ -1748,6 +1749,288 @@ app.post('/api/security/log-event', authenticateToken, async (req, res) => {
   }
 });
 
+// ============================================================================
+// STREAKFIT ROUTES
+// ============================================================================
+
+// Create new user
+app.post('/api/streakfit/signup', async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name is required'
+      });
+    }
+
+    // Check if user exists
+    const existingUser = await pool.query(
+      'SELECT * FROM streakfit_users WHERE LOWER(name) = LOWER($1)',
+      [name.trim()]
+    );
+
+    if (existingUser.rows.length > 0) {
+      const user = existingUser.rows[0];
+      
+      const streakResult = await pool.query(
+        'SELECT * FROM streakfit_streaks WHERE user_id = $1',
+        [user.id]
+      );
+
+      return res.json({
+        success: true,
+        user: user,
+        streak: streakResult.rows[0] || {
+          current_streak: 0,
+          total_calories: 0
+        }
+      });
+    }
+
+    // Create new user
+    const userResult = await pool.query(
+      'INSERT INTO streakfit_users (name, created_at) VALUES ($1, NOW()) RETURNING *',
+      [name.trim()]
+    );
+
+    const newUser = userResult.rows[0];
+
+    // Create initial streak record
+    const streakResult = await pool.query(
+      'INSERT INTO streakfit_streaks (user_id, current_streak, longest_streak, total_calories, last_completed) VALUES ($1, 0, 0, 0, NULL) RETURNING *',
+      [newUser.id]
+    );
+
+    res.json({
+      success: true,
+      user: newUser,
+      streak: streakResult.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create user'
+    });
+  }
+});
+
+// Get leaderboard
+app.get('/api/streakfit/leaderboard', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        u.id,
+        u.name,
+        s.current_streak,
+        s.longest_streak,
+        s.total_calories
+      FROM streakfit_users u
+      JOIN streakfit_streaks s ON u.id = s.user_id
+      ORDER BY s.current_streak DESC, s.total_calories DESC
+      LIMIT 50
+    `);
+
+    res.json({
+      success: true,
+      leaderboard: result.rows
+    });
+
+  } catch (error) {
+    console.error('Leaderboard error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch leaderboard'
+    });
+  }
+});
+
+// Complete today's challenge
+app.post('/api/streakfit/complete-challenge', async (req, res) => {
+  try {
+    const { userId, challengeId, challengeName, calories } = req.body;
+
+    if (!userId || !challengeId || !challengeName || !calories) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields'
+      });
+    }
+
+    // Check if already completed today
+    const today = new Date().toISOString().split('T')[0];
+    const existingChallenge = await pool.query(
+      'SELECT * FROM streakfit_challenges WHERE user_id = $1 AND DATE(completed_at) = $2',
+      [userId, today]
+    );
+
+    if (existingChallenge.rows.length > 0) {
+      const streak = await pool.query(
+        'SELECT * FROM streakfit_streaks WHERE user_id = $1',
+        [userId]
+      );
+
+      return res.json({
+        success: true,
+        message: 'Challenge already completed today',
+        streak: streak.rows[0]
+      });
+    }
+
+    // Record the challenge completion
+    await pool.query(
+      'INSERT INTO streakfit_challenges (user_id, challenge_id, challenge_name, calories, completed_at) VALUES ($1, $2, $3, $4, NOW())',
+      [userId, challengeId, challengeName, calories]
+    );
+
+    // Update streak
+    const streakResult = await pool.query(
+      'SELECT * FROM streakfit_streaks WHERE user_id = $1',
+      [userId]
+    );
+
+    const currentStreak = streakResult.rows[0];
+    const lastCompleted = currentStreak.last_completed ? new Date(currentStreak.last_completed) : null;
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+
+    let newStreak = currentStreak.current_streak;
+
+    if (!lastCompleted) {
+      newStreak = 1;
+    } else {
+      const lastDate = new Date(lastCompleted);
+      lastDate.setHours(0, 0, 0, 0);
+      
+      if (lastDate.getTime() === yesterday.getTime()) {
+        newStreak = currentStreak.current_streak + 1;
+      } else if (lastDate < yesterday) {
+        newStreak = 1;
+      }
+    }
+
+    const newLongestStreak = Math.max(newStreak, currentStreak.longest_streak);
+    const newTotalCalories = currentStreak.total_calories + calories;
+
+    const updatedStreak = await pool.query(
+      'UPDATE streakfit_streaks SET current_streak = $1, longest_streak = $2, total_calories = $3, last_completed = NOW() WHERE user_id = $4 RETURNING *',
+      [newStreak, newLongestStreak, newTotalCalories, userId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Challenge completed!',
+      streak: updatedStreak.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Complete challenge error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to complete challenge'
+    });
+  }
+});
+
+// Get user stats
+app.get('/api/streakfit/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const userResult = await pool.query(
+      'SELECT * FROM streakfit_users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const streakResult = await pool.query(
+      'SELECT * FROM streakfit_streaks WHERE user_id = $1',
+      [userId]
+    );
+
+    const challengesResult = await pool.query(
+      'SELECT * FROM streakfit_challenges WHERE user_id = $1 ORDER BY completed_at DESC LIMIT 10',
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      user: userResult.rows[0],
+      streak: streakResult.rows[0],
+      recent_challenges: challengesResult.rows
+    });
+
+  } catch (error) {
+    console.error('Get user stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch user stats'
+    });
+  }
+});
+
+// Database setup endpoint
+app.get('/api/streakfit/setup-database', async (req, res) => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS streakfit_users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS streakfit_streaks (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
+        current_streak INTEGER DEFAULT 0,
+        longest_streak INTEGER DEFAULT 0,
+        total_calories INTEGER DEFAULT 0,
+        last_completed TIMESTAMP,
+        UNIQUE(user_id)
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS streakfit_challenges (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
+        challenge_id INTEGER NOT NULL,
+        challenge_name VARCHAR(255) NOT NULL,
+        calories INTEGER NOT NULL,
+        completed_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    res.json({
+      success: true,
+      message: 'Database tables created successfully'
+    });
+
+  } catch (error) {
+    console.error('Database setup error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ============================================================================
+// START SERVER
+// ============================================================================
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Switchline backend server running on port ${PORT}`);
@@ -1755,4 +2038,5 @@ app.listen(PORT, () => {
   console.log(`✅ Dual-mode support enabled`);
   console.log(`🧪 Test endpoints available at /api/*/test-* routes`);
   console.log(`🔴 Production endpoints available with ?live=true parameter`);
+  console.log(`🔥 StreakFit API available at /api/streakfit/*`);
 });
