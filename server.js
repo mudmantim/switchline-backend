@@ -2178,14 +2178,37 @@ app.get('/api/streakfit/setup-database', async (req, res) => {
 // TRIVIA ENDPOINTS
 // ============================================================================
 
-// Get a random trivia question
+// Get a random trivia question (excludes already answered if authenticated)
 app.get('/api/streakfit/trivia/random', async (req, res) => {
   try {
     const { difficulty, category, age_group } = req.query;
     
+    // Check if user is authenticated (optional)
+    const token = req.headers['authorization']?.split(' ')[1];
+    let userId = null;
+    
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.userId;
+      } catch (err) {
+        // Invalid token - just continue without filtering
+      }
+    }
+    
     let query = 'SELECT * FROM trivia_questions WHERE 1=1';
     const params = [];
     let paramCount = 0;
+
+    // Exclude already answered questions if user is logged in
+    if (userId) {
+      paramCount++;
+      query += ` AND id NOT IN (
+        SELECT question_id FROM streakfit_trivia_answers 
+        WHERE user_id = $${paramCount}
+      )`;
+      params.push(userId);
+    }
 
     // Optional filters
     if (difficulty) {
@@ -2211,15 +2234,55 @@ app.get('/api/streakfit/trivia/random', async (req, res) => {
     const result = await pool.query(query, params);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'No questions found matching criteria'
+      // If no unanswered questions, allow repeats
+      let resetQuery = 'SELECT * FROM trivia_questions WHERE 1=1';
+      const resetParams = [];
+      let resetCount = 0;
+      
+      if (difficulty) {
+        resetCount++;
+        resetQuery += ` AND difficulty = $${resetCount}`;
+        resetParams.push(difficulty);
+      }
+      if (category) {
+        resetCount++;
+        resetQuery += ` AND category = $${resetCount}`;
+        resetParams.push(category);
+      }
+      if (age_group) {
+        resetCount++;
+        resetQuery += ` AND age_group = $${resetCount}`;
+        resetParams.push(age_group);
+      }
+      
+      resetQuery += ' ORDER BY RANDOM() LIMIT 1';
+      const resetResult = await pool.query(resetQuery, resetParams);
+      
+      if (resetResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'No questions found matching criteria'
+        });
+      }
+      
+      const question = resetResult.rows[0];
+      return res.json({
+        success: true,
+        allAnswered: true,
+        question: {
+          id: question.id,
+          question: question.question,
+          options: question.options,
+          category: question.category,
+          difficulty: question.difficulty,
+          age_group: question.age_group,
+          gems_value: question.gems_value
+        }
       });
     }
 
     const question = result.rows[0];
 
-    // Don't send the correct answer or explanation in the question
     res.json({
       success: true,
       question: {
@@ -2242,7 +2305,7 @@ app.get('/api/streakfit/trivia/random', async (req, res) => {
   }
 });
 
-// Submit trivia answer and get result with explanation
+// Submit trivia answer and get result with explanation (tracks answer if authenticated)
 app.post('/api/streakfit/trivia/answer', async (req, res) => {
   try {
     const { questionId, answer } = req.body;
@@ -2268,14 +2331,44 @@ app.post('/api/streakfit/trivia/answer', async (req, res) => {
 
     const question = result.rows[0];
     const isCorrect = question.correct_answer === parseInt(answer);
+    const gemsEarned = isCorrect ? question.gems_value : 0;
+
+    // Check if user is authenticated
+    const token = req.headers['authorization']?.split(' ')[1];
+    let userId = null;
+    
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.userId;
+        
+        // Record the answer
+        await pool.query(`
+          INSERT INTO streakfit_trivia_answers 
+          (user_id, question_id, answer_given, is_correct, gems_earned, answered_at)
+          VALUES ($1, $2, $3, $4, $5, NOW())
+          ON CONFLICT (user_id, question_id) 
+          DO UPDATE SET 
+            answer_given = $3,
+            is_correct = $4,
+            gems_earned = $5,
+            answered_at = NOW()
+        `, [userId, questionId, answer, isCorrect, gemsEarned]);
+        
+      } catch (err) {
+        // Invalid token - continue without recording
+        console.log('Token validation failed:', err.message);
+      }
+    }
 
     res.json({
       success: true,
       correct: isCorrect,
       correctAnswer: question.correct_answer,
       explanation: question.explanation,
-      gemsEarned: isCorrect ? question.gems_value : 0,
-      category: question.category
+      gemsEarned: gemsEarned,
+      category: question.category,
+      tracked: userId !== null
     });
 
   } catch (error) {
@@ -2312,6 +2405,91 @@ app.get('/api/streakfit/trivia/categories', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch categories'
+    });
+  }
+});
+// Get user's trivia statistics
+app.get('/api/streakfit/trivia/stats', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Overall stats
+    const statsResult = await pool.query(`
+      SELECT 
+        COUNT(*) as total_answered,
+        COUNT(*) FILTER (WHERE is_correct = true) as correct_count,
+        SUM(gems_earned) as total_gems
+      FROM streakfit_trivia_answers
+      WHERE user_id = $1
+    `, [userId]);
+
+    // Stats by category
+    const categoryStats = await pool.query(`
+      SELECT 
+        tq.category,
+        COUNT(*) as answered,
+        COUNT(*) FILTER (WHERE ta.is_correct = true) as correct,
+        SUM(ta.gems_earned) as gems
+      FROM streakfit_trivia_answers ta
+      JOIN trivia_questions tq ON ta.question_id = tq.id
+      WHERE ta.user_id = $1
+      GROUP BY tq.category
+      ORDER BY tq.category
+    `, [userId]);
+
+    // Stats by difficulty
+    const difficultyStats = await pool.query(`
+      SELECT 
+        tq.difficulty,
+        COUNT(*) as answered,
+        COUNT(*) FILTER (WHERE ta.is_correct = true) as correct
+      FROM streakfit_trivia_answers ta
+      JOIN trivia_questions tq ON ta.question_id = tq.id
+      WHERE ta.user_id = $1
+      GROUP BY tq.difficulty
+      ORDER BY tq.difficulty
+    `, [userId]);
+
+    // Recent answers
+    const recentAnswers = await pool.query(`
+      SELECT 
+        ta.question_id,
+        ta.is_correct,
+        ta.gems_earned,
+        ta.answered_at,
+        tq.question,
+        tq.category,
+        tq.difficulty
+      FROM streakfit_trivia_answers ta
+      JOIN trivia_questions tq ON ta.question_id = tq.id
+      WHERE ta.user_id = $1
+      ORDER BY ta.answered_at DESC
+      LIMIT 10
+    `, [userId]);
+
+    const stats = statsResult.rows[0];
+    const totalAnswered = parseInt(stats.total_answered) || 0;
+    const correctCount = parseInt(stats.correct_count) || 0;
+    const accuracy = totalAnswered > 0 ? Math.round((correctCount / totalAnswered) * 100) : 0;
+
+    res.json({
+      success: true,
+      stats: {
+        totalAnswered: totalAnswered,
+        correctAnswers: correctCount,
+        accuracy: accuracy,
+        totalGemsEarned: parseInt(stats.total_gems) || 0
+      },
+      byCategory: categoryStats.rows,
+      byDifficulty: difficultyStats.rows,
+      recentAnswers: recentAnswers.rows
+    });
+
+  } catch (error) {
+    console.error('Get trivia stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trivia stats'
     });
   }
 });
