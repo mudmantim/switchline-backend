@@ -2174,7 +2174,147 @@ app.get('/api/streakfit/setup-database', async (req, res) => {
     });
   }
 });
+// ============================================================================
+// TRIVIA ENDPOINTS
+// ============================================================================
 
+// Get a random trivia question
+app.get('/api/streakfit/trivia/random', async (req, res) => {
+  try {
+    const { difficulty, category, age_group } = req.query;
+    
+    let query = 'SELECT * FROM trivia_questions WHERE 1=1';
+    const params = [];
+    let paramCount = 0;
+
+    // Optional filters
+    if (difficulty) {
+      paramCount++;
+      query += ` AND difficulty = $${paramCount}`;
+      params.push(difficulty);
+    }
+
+    if (category) {
+      paramCount++;
+      query += ` AND category = $${paramCount}`;
+      params.push(category);
+    }
+
+    if (age_group) {
+      paramCount++;
+      query += ` AND age_group = $${paramCount}`;
+      params.push(age_group);
+    }
+
+    query += ' ORDER BY RANDOM() LIMIT 1';
+
+    const result = await pool.query(query, params);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No questions found matching criteria'
+      });
+    }
+
+    const question = result.rows[0];
+
+    // Don't send the correct answer or explanation in the question
+    res.json({
+      success: true,
+      question: {
+        id: question.id,
+        question: question.question,
+        options: question.options,
+        category: question.category,
+        difficulty: question.difficulty,
+        age_group: question.age_group,
+        gems_value: question.gems_value
+      }
+    });
+
+  } catch (error) {
+    console.error('Get random trivia error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trivia question'
+    });
+  }
+});
+
+// Submit trivia answer and get result with explanation
+app.post('/api/streakfit/trivia/answer', async (req, res) => {
+  try {
+    const { questionId, answer } = req.body;
+
+    if (questionId === undefined || answer === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Question ID and answer are required'
+      });
+    }
+
+    const result = await pool.query(
+      'SELECT correct_answer, explanation, gems_value, category FROM trivia_questions WHERE id = $1',
+      [questionId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Question not found'
+      });
+    }
+
+    const question = result.rows[0];
+    const isCorrect = question.correct_answer === parseInt(answer);
+
+    res.json({
+      success: true,
+      correct: isCorrect,
+      correctAnswer: question.correct_answer,
+      explanation: question.explanation,
+      gemsEarned: isCorrect ? question.gems_value : 0,
+      category: question.category
+    });
+
+  } catch (error) {
+    console.error('Submit trivia answer error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to submit answer'
+    });
+  }
+});
+
+// Get trivia categories and counts
+app.get('/api/streakfit/trivia/categories', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        category,
+        COUNT(*) as question_count,
+        COUNT(*) FILTER (WHERE difficulty = 'easy') as easy_count,
+        COUNT(*) FILTER (WHERE difficulty = 'medium') as medium_count,
+        COUNT(*) FILTER (WHERE difficulty = 'hard') as hard_count
+      FROM trivia_questions
+      GROUP BY category
+      ORDER BY category
+    `);
+
+    res.json({
+      success: true,
+      categories: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get trivia categories error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch categories'
+    });
+  }
+});
 // ============================================================================
 // START SERVER
 // ============================================================================
