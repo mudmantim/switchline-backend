@@ -3163,14 +3163,7 @@ app.get('/api/streakfit/fitness-level', authenticateStreakFitToken, async (req, 
     });
   }
 });
-  } catch (error) {
-    console.error('Get trivia stats error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch trivia stats'
-    });
-  }
-});
+
 // ============================================================================
 // START SERVER
 // ============================================================================
