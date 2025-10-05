@@ -3162,6 +3162,7 @@ app.get('/api/streakfit/fitness-level', authenticateStreakFitToken, async (req, 
       error: 'Failed to get fitness level'
     });
   }
+});
 // ============================================================================
 // START SERVER
 // ============================================================================
