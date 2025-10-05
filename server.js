@@ -33,62 +33,24 @@ app.use(cors({
 }));
 
 // ============================================================================
-// STREAKFIT WORKOUT DATA
-// ============================================================================
-
-const BEGINNER_WORKOUTS = [
-  { id: 1, name: "Jumping Jacks", reps: 20, gold: 10, xp: 15, category: "cardio" },
-  { id: 2, name: "Wall Push-ups", reps: 10, gold: 15, xp: 20, category: "strength" },
-  { id: 3, name: "Bodyweight Squats", reps: 15, gold: 12, xp: 18, category: "strength" },
-  { id: 4, name: "Knee Push-ups", reps: 8, gold: 12, xp: 18, category: "strength" },
-  { id: 5, name: "Standing Calf Raises", reps: 20, gold: 8, xp: 12, category: "strength" },
-  { id: 6, name: "Arm Circles", reps: 30, gold: 8, xp: 12, category: "warmup" },
-  { id: 7, name: "Marching in Place", duration: 60, gold: 10, xp: 15, category: "cardio" },
-  { id: 8, name: "Seated Toe Touches", reps: 10, gold: 8, xp: 12, category: "flexibility" },
-  { id: 9, name: "Chair Dips", reps: 8, gold: 15, xp: 20, category: "strength" },
-  { id: 10, name: "Side Leg Raises", reps: 12, gold: 10, xp: 15, category: "strength" }
-];
-
-const INTERMEDIATE_WORKOUTS = [
-  { id: 11, name: "Burpees", reps: 10, gold: 25, xp: 35, category: "cardio" },
-  { id: 12, name: "Push-ups", reps: 15, gold: 20, xp: 30, category: "strength" },
-  { id: 13, name: "Jump Squats", reps: 15, gold: 22, xp: 32, category: "strength" },
-  { id: 14, name: "Mountain Climbers", reps: 20, gold: 20, xp: 30, category: "cardio" },
-  { id: 15, name: "Lunges", reps: 20, gold: 18, xp: 28, category: "strength" },
-  { id: 16, name: "Plank Hold", duration: 45, gold: 25, xp: 35, category: "core" },
-  { id: 17, name: "High Knees", duration: 45, gold: 18, xp: 28, category: "cardio" },
-  { id: 18, name: "Diamond Push-ups", reps: 10, gold: 25, xp: 35, category: "strength" },
-  { id: 19, name: "Russian Twists", reps: 30, gold: 20, xp: 30, category: "core" },
-  { id: 20, name: "Box Jumps", reps: 12, gold: 28, xp: 38, category: "strength" }
-];
-
-const ADVANCED_WORKOUTS = [
-  { id: 21, name: "One-Arm Push-ups", reps: 8, gold: 40, xp: 55, category: "strength" },
-  { id: 22, name: "Pistol Squats", reps: 10, gold: 45, xp: 60, category: "strength" },
-  { id: 23, name: "Handstand Push-ups", reps: 5, gold: 50, xp: 70, category: "strength" },
-  { id: 24, name: "Burpee Pull-ups", reps: 10, gold: 45, xp: 60, category: "cardio" },
-  { id: 25, name: "Muscle-ups", reps: 5, gold: 55, xp: 75, category: "strength" },
-  { id: 26, name: "Dragon Flags", reps: 8, gold: 50, xp: 70, category: "core" },
-  { id: 27, name: "Clapping Push-ups", reps: 12, gold: 40, xp: 55, category: "strength" },
-  { id: 28, name: "L-Sit Hold", duration: 30, gold: 45, xp: 60, category: "core" },
-  { id: 29, name: "Archer Push-ups", reps: 10, gold: 42, xp: 57, category: "strength" },
-  { id: 30, name: "Box Jump Overs", reps: 15, gold: 38, xp: 52, category: "cardio" }
-];
-
-const ALL_WORKOUTS = [...BEGINNER_WORKOUTS, ...INTERMEDIATE_WORKOUTS, ...ADVANCED_WORKOUTS];
-
-// ============================================================================
 // DUAL-MODE UTILITIES
 // ============================================================================
 
 // Utility function to detect if request is in test mode
 const isTestMode = (req) => {
+  // Check URL parameters
   if (req.query.test === 'true') return true;
   if (req.query.live === 'true') return false;
+  
+  // Check headers
   if (req.headers['x-test-mode'] === 'true') return true;
   if (req.headers['x-live-mode'] === 'true') return false;
+  
+  // Check request body
   if (req.body && req.body.testMode === true) return true;
   if (req.body && req.body.liveMode === true) return false;
+  
+  // Default to test mode for safety
   return true;
 };
 
@@ -166,7 +128,50 @@ async function getOrCreateStripeCustomer(userId, email, name) {
     throw error;
   }
 }
+// ============================================================================
+// STREAKFIT WORKOUT DATA
+// ============================================================================
 
+const BEGINNER_WORKOUTS = [
+  { id: 1, name: "Jumping Jacks", reps: 20, gold: 10, xp: 15, category: "cardio" },
+  { id: 2, name: "Wall Push-ups", reps: 10, gold: 15, xp: 20, category: "strength" },
+  { id: 3, name: "Bodyweight Squats", reps: 15, gold: 12, xp: 18, category: "strength" },
+  { id: 4, name: "Knee Push-ups", reps: 8, gold: 12, xp: 18, category: "strength" },
+  { id: 5, name: "Standing Calf Raises", reps: 20, gold: 8, xp: 12, category: "strength" },
+  { id: 6, name: "Arm Circles", reps: 30, gold: 8, xp: 12, category: "warmup" },
+  { id: 7, name: "Marching in Place", duration: 60, gold: 10, xp: 15, category: "cardio" },
+  { id: 8, name: "Seated Toe Touches", reps: 10, gold: 8, xp: 12, category: "flexibility" },
+  { id: 9, name: "Chair Dips", reps: 8, gold: 15, xp: 20, category: "strength" },
+  { id: 10, name: "Side Leg Raises", reps: 12, gold: 10, xp: 15, category: "strength" }
+];
+
+const INTERMEDIATE_WORKOUTS = [
+  { id: 11, name: "Burpees", reps: 10, gold: 25, xp: 35, category: "cardio" },
+  { id: 12, name: "Push-ups", reps: 15, gold: 20, xp: 30, category: "strength" },
+  { id: 13, name: "Jump Squats", reps: 15, gold: 22, xp: 32, category: "strength" },
+  { id: 14, name: "Mountain Climbers", reps: 20, gold: 20, xp: 30, category: "cardio" },
+  { id: 15, name: "Lunges", reps: 20, gold: 18, xp: 28, category: "strength" },
+  { id: 16, name: "Plank Hold", duration: 45, gold: 25, xp: 35, category: "core" },
+  { id: 17, name: "High Knees", duration: 45, gold: 18, xp: 28, category: "cardio" },
+  { id: 18, name: "Diamond Push-ups", reps: 10, gold: 25, xp: 35, category: "strength" },
+  { id: 19, name: "Russian Twists", reps: 30, gold: 20, xp: 30, category: "core" },
+  { id: 20, name: "Box Jumps", reps: 12, gold: 28, xp: 38, category: "strength" }
+];
+
+const ADVANCED_WORKOUTS = [
+  { id: 21, name: "One-Arm Push-ups", reps: 8, gold: 40, xp: 55, category: "strength" },
+  { id: 22, name: "Pistol Squats", reps: 10, gold: 45, xp: 60, category: "strength" },
+  { id: 23, name: "Handstand Push-ups", reps: 5, gold: 50, xp: 70, category: "strength" },
+  { id: 24, name: "Burpee Pull-ups", reps: 10, gold: 45, xp: 60, category: "cardio" },
+  { id: 25, name: "Muscle-ups", reps: 5, gold: 55, xp: 75, category: "strength" },
+  { id: 26, name: "Dragon Flags", reps: 8, gold: 50, xp: 70, category: "core" },
+  { id: 27, name: "Clapping Push-ups", reps: 12, gold: 40, xp: 55, category: "strength" },
+  { id: 28, name: "L-Sit Hold", duration: 30, gold: 45, xp: 60, category: "core" },
+  { id: 29, name: "Archer Push-ups", reps: 10, gold: 42, xp: 57, category: "strength" },
+  { id: 30, name: "Box Jump Overs", reps: 15, gold: 38, xp: 52, category: "cardio" }
+];
+
+const ALL_WORKOUTS = [...BEGINNER_WORKOUTS, ...INTERMEDIATE_WORKOUTS, ...ADVANCED_WORKOUTS];
 // ============================================================================
 // HEALTH CHECK AND TESTING ENDPOINTS
 // ============================================================================
@@ -277,6 +282,7 @@ app.post('/api/debug/test-webhook', async (req, res) => {
     console.log('Headers:', req.headers);
     console.log('Body:', req.body);
     
+    // Simulate a checkout.session.completed event
     const mockSession = {
       id: 'cs_test_manual_' + Date.now(),
       subscription: 'sub_test_manual_' + Date.now(),
@@ -288,11 +294,11 @@ app.post('/api/debug/test-webhook', async (req, res) => {
       customer: mockSession.customer,
       status: 'active',
       current_period_start: Math.floor(Date.now() / 1000),
-      current_period_end: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60),
+      current_period_end: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days
       items: {
         data: [{
           price: {
-            id: 'price_1S8gJfLz1CB1flJ3nYeAtyOt',
+            id: 'price_1S8gJfLz1CB1flJ3nYeAtyOt', // Basic plan
             unit_amount: 399
           }
         }]
@@ -306,14 +312,18 @@ app.post('/api/debug/test-webhook', async (req, res) => {
     
     console.log('🧪 Testing handleCheckoutCompleted function...');
     
+    // Test the webhook handler functions directly
     try {
+      // Simulate the webhook processing
       console.log('🎉 Mock checkout completed:', mockSession.id);
       
+      // Test user creation - CHECK IF USER EXISTS FIRST
       let user = await pool.query('SELECT * FROM users WHERE email = $1', [mockCustomer.email]);
       
       if (user.rows.length === 0) {
         console.log('👤 Creating test user...');
         
+        // Create user without ON CONFLICT - check first then insert
         const newUser = await pool.query(`
           INSERT INTO users (email, password_hash, stripe_customer_id, status, created_at, updated_at) 
           VALUES ($1, 'webhook_user', $2, 'active', NOW(), NOW()) 
@@ -324,6 +334,7 @@ app.post('/api/debug/test-webhook', async (req, res) => {
         console.log('✅ Test user created');
       } else {
         console.log('👤 Test user already exists');
+        // Update existing user
         await pool.query(`
           UPDATE users 
           SET stripe_customer_id = $1, updated_at = NOW() 
@@ -332,12 +343,15 @@ app.post('/api/debug/test-webhook', async (req, res) => {
         console.log('✅ Test user updated');
       }
       
+      // Test subscription creation
       console.log('📋 Testing subscription creation...');
       
+      // Map price to plan name
       let planName = 'Basic';
       if (mockSubscription.items.data[0].price.unit_amount === 999) planName = 'Pro';
       if (mockSubscription.items.data[0].price.unit_amount === 2999) planName = 'Enterprise';
       
+      // Get plan ID
       const planResult = await pool.query('SELECT id FROM subscription_plans WHERE name = $1', [planName]);
       
       if (planResult.rows.length === 0) {
@@ -347,18 +361,21 @@ app.post('/api/debug/test-webhook', async (req, res) => {
       const planId = planResult.rows[0].id;
       console.log(`📋 Found plan: ${planName} (${planId})`);
       
+      // Get user ID for subscription
       const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [mockCustomer.email]);
       if (userResult.rows.length === 0) {
         throw new Error('User not found after creation');
       }
       const userId = userResult.rows[0].id;
       
+      // Check if subscription already exists
       const existingSubscription = await pool.query(
         'SELECT id FROM user_subscriptions WHERE user_id = $1', 
         [userId]
       );
       
       if (existingSubscription.rows.length === 0) {
+        // Create new subscription
         await pool.query(`
           INSERT INTO user_subscriptions (
             user_id,
@@ -382,6 +399,7 @@ app.post('/api/debug/test-webhook', async (req, res) => {
         ]);
         console.log('✅ New subscription created');
       } else {
+        // Update existing subscription
         await pool.query(`
           UPDATE user_subscriptions SET
             plan_id = $1,
@@ -468,10 +486,11 @@ app.get('/api/debug/subscription-data', async (req, res) => {
 // DUAL-MODE ENDPOINTS
 // ============================================================================
 
+// NEW: Test Purchase Endpoint (Free - No actual Twilio purchase)
 app.post('/api/numbers/test-purchase', async (req, res) => {
   try {
     const { phoneNumber } = req.body;
-    const testMode = true;
+    const testMode = true; // Always test mode for this endpoint
 
     logModeAction('Number test purchase request', testMode, { phoneNumber });
 
@@ -479,8 +498,10 @@ app.post('/api/numbers/test-purchase', async (req, res) => {
       return res.status(400).json({ error: 'Phone number is required' });
     }
 
+    // Simulate delay for realism
     await new Promise(resolve => setTimeout(resolve, 1000));
 
+    // Return success without actually purchasing
     res.json({
       success: true,
       message: 'Test purchase simulation completed',
@@ -507,6 +528,7 @@ app.post('/api/numbers/test-purchase', async (req, res) => {
   }
 });
 
+// NEW: Enhanced Messages Send with Dual-Mode Support
 app.post('/api/messages/send', async (req, res) => {
   try {
     const { to, body, from, testMode: requestedTestMode } = req.body;
@@ -519,8 +541,10 @@ app.post('/api/messages/send', async (req, res) => {
     }
 
     if (testMode) {
+      // TEST MODE - Simulate SMS without sending
       console.log(`🧪 TEST SMS: From ${from || 'auto'} to ${to}: ${body}`);
       
+      // Simulate delay
       await new Promise(resolve => setTimeout(resolve, 500));
 
       res.json({
@@ -542,8 +566,10 @@ app.post('/api/messages/send', async (req, res) => {
       return;
     }
 
+    // PRODUCTION MODE - Real SMS (existing logic)
     let fromNumber = from;
     if (!fromNumber && req.user) {
+      // Get user's first active number
       const activeNumberResult = await pool.query(`
         SELECT phone_number 
         FROM phone_numbers 
@@ -576,7 +602,7 @@ app.post('/api/messages/send', async (req, res) => {
       messageSid: message.sid,
       status: message.status,
       testMode: false,
-      cost: 0.0075
+      cost: 0.0075 // Approximate Twilio SMS cost
     });
 
     logModeAction('Production SMS sent successfully', testMode, { sid: message.sid });
@@ -591,6 +617,7 @@ app.post('/api/messages/send', async (req, res) => {
   }
 });
 
+// NEW: Mode Detection Endpoint
 app.get('/api/mode/detect', (req, res) => {
   const testMode = isTestMode(req);
   res.json({
@@ -601,6 +628,7 @@ app.get('/api/mode/detect', (req, res) => {
   });
 });
 
+// NEW: Mode Configuration Endpoint
 app.get('/api/mode/config', (req, res) => {
   const testMode = isTestMode(req);
   res.json({
@@ -624,15 +652,17 @@ app.get('/api/mode/config', (req, res) => {
   });
 });
 
-// ============================================================================
-// STRIPE WEBHOOK AND EVENT HANDLERS
-// ============================================================================
+// =====================================
+// STRIPE WEBHOOK INTEGRATION
+// =====================================
 
+// Stripe webhook endpoint - handles subscription events
 app.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
   try {
+    // Verify webhook signature
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
     console.log('✅ Webhook signature verified:', event.type);
   } catch (err) {
@@ -640,26 +670,33 @@ app.post('/webhook', async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  // Handle the event
   try {
     switch (event.type) {
       case 'checkout.session.completed':
         await handleCheckoutCompleted(event.data.object);
         break;
+      
       case 'customer.subscription.created':
         await handleSubscriptionCreated(event.data.object);
         break;
+      
       case 'customer.subscription.updated':
         await handleSubscriptionUpdated(event.data.object);
         break;
+      
       case 'customer.subscription.deleted':
         await handleSubscriptionDeleted(event.data.object);
         break;
+      
       case 'invoice.payment_succeeded':
         await handlePaymentSucceeded(event.data.object);
         break;
+      
       case 'invoice.payment_failed':
         await handlePaymentFailed(event.data.object);
         break;
+      
       default:
         console.log(`Unhandled event type: ${event.type}`);
     }
@@ -671,16 +708,23 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
+// =====================================
+// STRIPE EVENT HANDLERS - FIXED
+// =====================================
+
 async function handleCheckoutCompleted(session) {
   console.log('🎉 Checkout completed:', session.id);
   
   try {
+    // Get the subscription details
     const subscription = await stripe.subscriptions.retrieve(session.subscription);
     const customer = await stripe.customers.retrieve(session.customer);
     
+    // Find or create user
     let user = await pool.query('SELECT * FROM users WHERE email = $1', [customer.email]);
     
     if (user.rows.length === 0) {
+      // Create new user if doesn't exist - FIXED: removed salt column
       const newUser = await pool.query(`
         INSERT INTO users (email, password_hash, stripe_customer_id, status, created_at, updated_at) 
         VALUES ($1, 'webhook_user', $2, 'active', NOW(), NOW()) 
@@ -688,6 +732,7 @@ async function handleCheckoutCompleted(session) {
       `, [customer.email, customer.id]);
       user = newUser;
     } else {
+      // Update existing user with customer ID
       await pool.query(`
         UPDATE users 
         SET stripe_customer_id = $1, updated_at = NOW() 
@@ -695,6 +740,7 @@ async function handleCheckoutCompleted(session) {
       `, [customer.id, customer.email]);
     }
     
+    // Create subscription record
     await createUserSubscription(subscription, customer.email);
     
   } catch (error) {
@@ -759,6 +805,7 @@ async function handlePaymentSucceeded(invoice) {
   
   if (invoice.subscription) {
     try {
+      // Record billing event
       await pool.query(`
         INSERT INTO billing_events (
           user_id, 
@@ -788,6 +835,7 @@ async function handlePaymentFailed(invoice) {
   console.log('❌ Payment failed:', invoice.id);
   
   try {
+    // Record failed payment
     await pool.query(`
       INSERT INTO billing_events (
         user_id, 
@@ -812,14 +860,18 @@ async function handlePaymentFailed(invoice) {
   }
 }
 
+// FIXED: Helper function to create user subscription - removed ON CONFLICT issues
 async function createUserSubscription(subscription, userEmail) {
   try {
+    // Get plan details from Stripe price
     const price = await stripe.prices.retrieve(subscription.items.data[0].price.id);
     
+    // Map Stripe price to our plan - FIXED MAPPING
     let planName = 'Basic';
     if (price.unit_amount === 999) planName = 'Pro';
     if (price.unit_amount === 2999) planName = 'Enterprise';
     
+    // Get our internal plan ID
     const planResult = await pool.query('SELECT id FROM subscription_plans WHERE name = $1', [planName]);
     
     if (planResult.rows.length === 0) {
@@ -828,18 +880,21 @@ async function createUserSubscription(subscription, userEmail) {
     
     const planId = planResult.rows[0].id;
     
+    // Get user ID
     const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [userEmail]);
     if (userResult.rows.length === 0) {
       throw new Error(`User not found: ${userEmail}`);
     }
     const userId = userResult.rows[0].id;
     
+    // Check if subscription exists and handle appropriately
     const existingSubscription = await pool.query(
       'SELECT id FROM user_subscriptions WHERE user_id = $1', 
       [userId]
     );
     
     if (existingSubscription.rows.length === 0) {
+      // Create new subscription
       await pool.query(`
         INSERT INTO user_subscriptions (
           user_id,
@@ -862,6 +917,7 @@ async function createUserSubscription(subscription, userEmail) {
         new Date(subscription.current_period_end * 1000)
       ]);
     } else {
+      // Update existing subscription
       await pool.query(`
         UPDATE user_subscriptions SET
           plan_id = $1,
@@ -888,10 +944,11 @@ async function createUserSubscription(subscription, userEmail) {
   }
 }
 
-// ============================================================================
-// SUBSCRIPTION ENDPOINTS
-// ============================================================================
+// =====================================
+// SUBSCRIPTION CREATION ENDPOINTS
+// =====================================
 
+// Create checkout session for subscription
 app.post('/api/create-checkout-session', async (req, res) => {
   try {
     const { priceId, userEmail, planName } = req.body;
@@ -900,6 +957,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
       return res.status(400).json({ error: 'Price ID and email required' });
     }
 
+    // Create or retrieve customer
     let customer;
     try {
       const customers = await stripe.customers.list({
@@ -922,6 +980,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
       return res.status(500).json({ error: 'Failed to create customer' });
     }
 
+    // Create checkout session
     const session = await stripe.checkout.sessions.create({
       customer: customer.id,
       payment_method_types: ['card'],
@@ -956,10 +1015,12 @@ app.post('/api/create-checkout-session', async (req, res) => {
   }
 });
 
+// Get subscription status for a user
 app.get('/api/subscription-status/:email', async (req, res) => {
   try {
     const { email } = req.params;
     
+    // Get user and subscription from database
     const result = await pool.query(`
       SELECT 
         u.id as user_id,
@@ -1021,6 +1082,7 @@ app.get('/api/subscription-status/:email', async (req, res) => {
   }
 });
 
+// Cancel subscription
 app.post('/api/cancel-subscription', async (req, res) => {
   try {
     const { userEmail } = req.body;
@@ -1029,6 +1091,7 @@ app.post('/api/cancel-subscription', async (req, res) => {
       return res.status(400).json({ error: 'Email required' });
     }
     
+    // Get user's subscription
     const result = await pool.query(`
       SELECT us.stripe_subscription_id 
       FROM users u
@@ -1042,6 +1105,7 @@ app.post('/api/cancel-subscription', async (req, res) => {
     
     const subscriptionId = result.rows[0].stripe_subscription_id;
     
+    // Cancel in Stripe
     const subscription = await stripe.subscriptions.update(subscriptionId, {
       cancel_at_period_end: true
     });
@@ -1063,8 +1127,10 @@ app.post('/api/cancel-subscription', async (req, res) => {
   }
 });
 
+// Test endpoint to verify subscription system
 app.get('/api/test-subscription-system', async (req, res) => {
   try {
+    // Test database connections
     const plans = await pool.query('SELECT * FROM subscription_plans ORDER BY price_cents');
     const userCount = await pool.query('SELECT COUNT(*) FROM users');
     const subscriptionCount = await pool.query('SELECT COUNT(*) FROM user_subscriptions');
@@ -1097,7 +1163,7 @@ app.get('/api/test-subscription-system', async (req, res) => {
 });
 
 // ============================================================================
-// AUTHENTICATION ENDPOINTS (Switchline)
+// AUTHENTICATION ENDPOINTS
 // ============================================================================
 
 app.post('/api/auth/register', async (req, res) => {
@@ -1196,7 +1262,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ============================================================================
-// PHONE NUMBER ENDPOINTS
+// PHONE NUMBER ENDPOINTS (Enhanced with Dual-Mode)
 // ============================================================================
 
 app.get('/api/numbers/search/:areaCode', async (req, res) => {
@@ -1251,6 +1317,7 @@ app.get('/api/numbers/search/:areaCode', async (req, res) => {
   }
 });
 
+// ENHANCED: Purchase endpoint now supports dual-mode via URL params
 app.post('/api/numbers/purchase', async (req, res) => {
   try {
     const { phoneNumber } = req.body;
@@ -1263,6 +1330,7 @@ app.post('/api/numbers/purchase', async (req, res) => {
     }
 
     if (testMode) {
+      // Redirect to test purchase endpoint
       return res.json({
         success: true,
         message: 'Redirected to test purchase',
@@ -1271,10 +1339,12 @@ app.post('/api/numbers/purchase', async (req, res) => {
       });
     }
 
+    // Require authentication for production purchases
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required for production purchases' });
     }
 
+    // Check user's plan limits
     const userResult = await pool.query(`
       SELECT COUNT(pn.id) as current_count
       FROM phone_numbers pn 
@@ -1283,6 +1353,7 @@ app.post('/api/numbers/purchase', async (req, res) => {
 
     const currentCount = parseInt(userResult.rows[0].current_count) || 0;
     
+    // Basic limit check (can be enhanced with plan-based limits later)
     if (currentCount >= 5) {
       return res.status(400).json({ 
         error: 'Phone number limit reached for your plan',
@@ -1290,12 +1361,14 @@ app.post('/api/numbers/purchase', async (req, res) => {
       });
     }
 
+    // Purchase number through Twilio
     const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
       phoneNumber: phoneNumber,
       voiceUrl: `${process.env.BASE_URL}/webhook/twilio/voice`,
       smsUrl: `${process.env.BASE_URL}/webhook/twilio/sms`
     });
 
+    // Store in database
     const result = await pool.query(`
       INSERT INTO phone_numbers (user_id, phone_number, twilio_sid, status, created_at)
       VALUES ($1, $2, $3, 'active', NOW())
@@ -1361,9 +1434,11 @@ app.delete('/api/numbers/:id/burn', authenticateToken, async (req, res) => {
     const { phone_number, twilio_sid } = numberResult.rows[0];
 
     if (!testMode && twilio_sid && twilio_sid !== 'test_sid') {
+      // Release number from Twilio (production only)
       await twilioClient.incomingPhoneNumbers(twilio_sid).remove();
     }
 
+    // Update database
     await pool.query(`
       UPDATE phone_numbers 
       SET status = 'burned', updated_at = NOW() 
@@ -1388,7 +1463,7 @@ app.delete('/api/numbers/:id/burn', authenticateToken, async (req, res) => {
 });
 
 // ============================================================================
-// MESSAGING ENDPOINTS
+// MESSAGING ENDPOINTS (Already enhanced above)
 // ============================================================================
 
 app.get('/api/messages', authenticateToken, async (req, res) => {
@@ -1428,6 +1503,7 @@ app.post('/api/calls/make', authenticateToken, async (req, res) => {
     }
 
     if (testMode) {
+      // Test mode - simulate call
       res.json({
         success: true,
         callSid: 'test_call_' + Date.now(),
@@ -1473,7 +1549,7 @@ app.post('/api/calls/make', authenticateToken, async (req, res) => {
       callSid: call.sid,
       status: call.status,
       testMode: false,
-      estimatedCost: 0.013
+      estimatedCost: 0.013 // per minute
     });
 
     logModeAction('Production call initiated', testMode, { sid: call.sid });
@@ -1509,7 +1585,7 @@ app.get('/api/calls', authenticateToken, async (req, res) => {
 });
 
 // ============================================================================
-// BILLING ENDPOINTS
+// BILLING ENDPOINTS  
 // ============================================================================
 
 app.get('/api/billing/subscription', authenticateToken, async (req, res) => {
@@ -1575,7 +1651,7 @@ app.get('/api/billing/history', authenticateToken, async (req, res) => {
 });
 
 // ============================================================================
-// WEBHOOK ENDPOINTS
+// WEBHOOK ENDPOINTS (Enhanced for dual-mode)
 // ============================================================================
 
 app.post('/webhook/twilio/voice', (req, res) => {
@@ -1679,6 +1755,7 @@ app.get('/api/conversations/:phoneNumber', authenticateToken, async (req, res) =
 
 app.get('/api/admin/stats', authenticateToken, async (req, res) => {
   try {
+    // Basic admin check (enhance with proper role checking)
     const userCheck = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
     if (userCheck.rows.length === 0 || !userCheck.rows[0].email.includes('admin')) {
       return res.status(403).json({ error: 'Admin access required' });
@@ -1740,13 +1817,15 @@ app.post('/api/security/log-event', authenticateToken, async (req, res) => {
 });
 
 // ============================================================================
-// STREAKFIT AUTHENTICATION
+// STREAKFIT ROUTES WITH AUTHENTICATION
 // ============================================================================
 
+// User signup with email/password
 app.post('/api/streakfit/signup', async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
+    // Validation
     if (!name || !name.trim()) {
       return res.status(400).json({
         success: false,
@@ -1768,6 +1847,7 @@ app.post('/api/streakfit/signup', async (req, res) => {
       });
     }
 
+    // Check if email already exists
     const existingUser = await pool.query(
       'SELECT * FROM streakfit_users WHERE LOWER(email) = LOWER($1)',
       [email.trim()]
@@ -1780,8 +1860,10 @@ app.post('/api/streakfit/signup', async (req, res) => {
       });
     }
 
+    // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
+    // Create new user
     const userResult = await pool.query(
       `INSERT INTO streakfit_users (name, email, password_hash, created_at) 
        VALUES ($1, $2, $3, NOW()) 
@@ -1791,18 +1873,14 @@ app.post('/api/streakfit/signup', async (req, res) => {
 
     const newUser = userResult.rows[0];
 
+    // Create initial streak record
     await pool.query(
       `INSERT INTO streakfit_streaks (user_id, current_streak, longest_streak, total_calories, last_completed) 
        VALUES ($1, 0, 0, 0, NULL)`,
       [newUser.id]
     );
 
-    await pool.query(
-      `INSERT INTO streakfit_user_progression (user_id, level, total_gold, total_xp, total_gems) 
-       VALUES ($1, 'beginner', 0, 0, 0)`,
-      [newUser.id]
-    );
-
+    // Generate JWT token
     const token = jwt.sign(
       { userId: newUser.id, email: newUser.email },
       process.env.JWT_SECRET,
@@ -1828,6 +1906,7 @@ app.post('/api/streakfit/signup', async (req, res) => {
   }
 });
 
+// User login
 app.post('/api/streakfit/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -1839,6 +1918,7 @@ app.post('/api/streakfit/login', async (req, res) => {
       });
     }
 
+    // Find user
     const userResult = await pool.query(
       'SELECT * FROM streakfit_users WHERE LOWER(email) = LOWER($1)',
       [email.trim()]
@@ -1853,6 +1933,7 @@ app.post('/api/streakfit/login', async (req, res) => {
 
     const user = userResult.rows[0];
 
+    // Verify password
     const validPassword = await bcrypt.compare(password, user.password_hash);
 
     if (!validPassword) {
@@ -1862,21 +1943,208 @@ app.post('/api/streakfit/login', async (req, res) => {
       });
     }
 
+    // Get user's streak data
+    const streakResult = await pool.query(
+      'SELECT * FROM streakfit_streaks WHERE user_id = $1',
+      [user.id]
+    );
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email
+      },
+      streak: streakResult.rows[0] || {
+        current_streak: 0,
+        total_calories: 0
+      },
+      token: token
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Login failed'
+    });
+  }
+});
+
+// Get leaderboard (authenticated)
+app.get('/api/streakfit/leaderboard', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        u.id,
+        u.name,
+        s.current_streak,
+        s.longest_streak,
+        s.total_calories
+      FROM streakfit_users u
+      JOIN streakfit_streaks s ON u.id = s.user_id
+      ORDER BY s.current_streak DESC, s.total_calories DESC
+      LIMIT 50
+    `);
+
+    res.json({
+      success: true,
+      leaderboard: result.rows
+    });
+
+  } catch (error) {
+    console.error('Leaderboard error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch leaderboard'
+    });
+  }
+});
+
+// Complete today's challenge (authenticated)
+app.post('/api/streakfit/complete-challenge', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const { challengeId, challengeName, calories } = req.body;
+    const userId = req.user.userId;
+
+    // Validate input
+    if (!challengeId || !challengeName || !calories) {
+      return res.status(400).json({
+        success: false,
+        error: 'Challenge ID, name, and calories are required'
+      });
+    }
+
+    // Check if user already completed a challenge today
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const existingChallenge = await pool.query(
+      `SELECT * FROM streakfit_challenges 
+       WHERE user_id = $1 AND completed_at >= $2`,
+      [userId, todayStart]
+    );
+
+    if (existingChallenge.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'You have already completed a challenge today'
+      });
+    }
+
+    // Record the challenge completion
+    await pool.query(
+      `INSERT INTO streakfit_challenges (user_id, challenge_id, challenge_name, calories, completed_at)
+       VALUES ($1, $2, $3, $4, NOW())`,
+      [userId, challengeId, challengeName, calories]
+    );
+
+    // Get current streak data
     const streakResult = await pool.query(
       'SELECT * FROM streakfit_streaks WHERE user_id = $1',
       [userId]
     );
 
-    const progressionResult = await pool.query(
-      'SELECT * FROM streakfit_user_progression WHERE user_id = $1',
+    let currentStreak = 0;
+    let longestStreak = 0;
+    let totalCalories = 0;
+
+    if (streakResult.rows.length > 0) {
+      const streak = streakResult.rows[0];
+      const lastCompleted = streak.last_completed ? new Date(streak.last_completed) : null;
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(0, 0, 0, 0);
+
+      // Check if streak continues
+      if (lastCompleted && lastCompleted >= yesterday) {
+        currentStreak = streak.current_streak + 1;
+      } else {
+        currentStreak = 1;
+      }
+
+      longestStreak = Math.max(currentStreak, streak.longest_streak);
+      totalCalories = streak.total_calories + calories;
+    } else {
+      currentStreak = 1;
+      longestStreak = 1;
+      totalCalories = calories;
+    }
+
+    // Update streak data
+    await pool.query(
+      `INSERT INTO streakfit_streaks (user_id, current_streak, longest_streak, total_calories, last_completed)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (user_id) 
+       DO UPDATE SET 
+         current_streak = $2,
+         longest_streak = $3,
+         total_calories = $4,
+         last_completed = NOW()`,
+      [userId, currentStreak, longestStreak, totalCalories]
+    );
+
+    res.json({
+      success: true,
+      streak: {
+        current_streak: currentStreak,
+        longest_streak: longestStreak,
+        total_calories: totalCalories
+      }
+    });
+
+  } catch (error) {
+    console.error('Complete challenge error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to complete challenge'
+    });
+  }
+});
+
+// Get user stats (authenticated)
+app.get('/api/streakfit/user/:userId', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Ensure user can only access their own data
+    if (parseInt(userId) !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied'
+      });
+    }
+
+    const userResult = await pool.query(
+      'SELECT id, name, email, created_at FROM streakfit_users WHERE id = $1',
       [userId]
     );
 
-    const challengesResult = await pool.query(`
-      SELECT * FROM streakfit_challenges 
-      WHERE user_id = $1 
-      ORDER BY completed_at DESC 
-      LIMIT 30`,
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const streakResult = await pool.query(
+      'SELECT * FROM streakfit_streaks WHERE user_id = $1',
+      [userId]
+    );
+
+    const challengesResult = await pool.query(
+      `SELECT * FROM streakfit_challenges 
+       WHERE user_id = $1 
+       ORDER BY completed_at DESC 
+       LIMIT 30`,
       [userId]
     );
 
@@ -1887,12 +2155,6 @@ app.post('/api/streakfit/login', async (req, res) => {
         current_streak: 0,
         longest_streak: 0,
         total_calories: 0
-      },
-      progression: progressionResult.rows[0] || {
-        level: 'beginner',
-        total_gold: 0,
-        total_xp: 0,
-        total_gems: 0
       },
       recent_challenges: challengesResult.rows
     });
@@ -1906,14 +2168,65 @@ app.post('/api/streakfit/login', async (req, res) => {
   }
 });
 
+// Database setup endpoint for StreakFit
+app.get('/api/streakfit/setup-database', async (req, res) => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS streakfit_users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS streakfit_streaks (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
+        current_streak INTEGER DEFAULT 0,
+        longest_streak INTEGER DEFAULT 0,
+        total_calories INTEGER DEFAULT 0,
+        last_completed TIMESTAMP,
+        UNIQUE(user_id)
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS streakfit_challenges (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
+        challenge_id INTEGER NOT NULL,
+        challenge_name VARCHAR(255) NOT NULL,
+        calories INTEGER NOT NULL,
+        completed_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    res.json({
+      success: true,
+      message: 'StreakFit database tables created successfully'
+    });
+
+  } catch (error) {
+    console.error('Database setup error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 // ============================================================================
 // TRIVIA ENDPOINTS
 // ============================================================================
 
+// Get a random trivia question (excludes already answered if authenticated)
 app.get('/api/streakfit/trivia/random', async (req, res) => {
   try {
     const { difficulty, category, age_group } = req.query;
     
+    // Check if user is authenticated (optional)
     const token = req.headers['authorization']?.split(' ')[1];
     let userId = null;
     
@@ -1922,7 +2235,7 @@ app.get('/api/streakfit/trivia/random', async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         userId = decoded.userId;
       } catch (err) {
-        // Invalid token - continue without filtering
+        // Invalid token - just continue without filtering
       }
     }
     
@@ -1930,30 +2243,32 @@ app.get('/api/streakfit/trivia/random', async (req, res) => {
     const params = [];
     let paramCount = 0;
 
+    // Exclude already answered questions if user is logged in
     if (userId) {
       paramCount++;
       query += ` AND id NOT IN (
         SELECT question_id FROM streakfit_trivia_answers 
-        WHERE user_id = ${paramCount}
+        WHERE user_id = $${paramCount}
       )`;
       params.push(userId);
     }
 
+    // Optional filters
     if (difficulty) {
       paramCount++;
-      query += ` AND difficulty = ${paramCount}`;
+      query += ` AND difficulty = $${paramCount}`;
       params.push(difficulty);
     }
 
     if (category) {
       paramCount++;
-      query += ` AND category = ${paramCount}`;
+      query += ` AND category = $${paramCount}`;
       params.push(category);
     }
 
     if (age_group) {
       paramCount++;
-      query += ` AND age_group = ${paramCount}`;
+      query += ` AND age_group = $${paramCount}`;
       params.push(age_group);
     }
 
@@ -1962,23 +2277,24 @@ app.get('/api/streakfit/trivia/random', async (req, res) => {
     const result = await pool.query(query, params);
 
     if (result.rows.length === 0) {
+      // If no unanswered questions, allow repeats
       let resetQuery = 'SELECT * FROM trivia_questions WHERE 1=1';
       const resetParams = [];
       let resetCount = 0;
       
       if (difficulty) {
         resetCount++;
-        resetQuery += ` AND difficulty = ${resetCount}`;
+        resetQuery += ` AND difficulty = $${resetCount}`;
         resetParams.push(difficulty);
       }
       if (category) {
         resetCount++;
-        resetQuery += ` AND category = ${resetCount}`;
+        resetQuery += ` AND category = $${resetCount}`;
         resetParams.push(category);
       }
       if (age_group) {
         resetCount++;
-        resetQuery += ` AND age_group = ${resetCount}`;
+        resetQuery += ` AND age_group = $${resetCount}`;
         resetParams.push(age_group);
       }
       
@@ -2032,6 +2348,7 @@ app.get('/api/streakfit/trivia/random', async (req, res) => {
   }
 });
 
+// Submit trivia answer and get result with explanation (tracks answer if authenticated)
 app.post('/api/streakfit/trivia/answer', async (req, res) => {
   try {
     const { questionId, answer } = req.body;
@@ -2059,6 +2376,7 @@ app.post('/api/streakfit/trivia/answer', async (req, res) => {
     const isCorrect = question.correct_answer === parseInt(answer);
     const gemsEarned = isCorrect ? question.gems_value : 0;
 
+    // Check if user is authenticated
     const token = req.headers['authorization']?.split(' ')[1];
     let userId = null;
     
@@ -2067,6 +2385,7 @@ app.post('/api/streakfit/trivia/answer', async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         userId = decoded.userId;
         
+        // Record the answer
         await pool.query(`
           INSERT INTO streakfit_trivia_answers 
           (user_id, question_id, answer_given, is_correct, gems_earned, answered_at)
@@ -2080,6 +2399,7 @@ app.post('/api/streakfit/trivia/answer', async (req, res) => {
         `, [userId, questionId, answer, isCorrect, gemsEarned]);
         
       } catch (err) {
+        // Invalid token - continue without recording
         console.log('Token validation failed:', err.message);
       }
     }
@@ -2103,6 +2423,7 @@ app.post('/api/streakfit/trivia/answer', async (req, res) => {
   }
 });
 
+// Get trivia categories and counts
 app.get('/api/streakfit/trivia/categories', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -2130,11 +2451,12 @@ app.get('/api/streakfit/trivia/categories', async (req, res) => {
     });
   }
 });
-
+// Get user's trivia statistics
 app.get('/api/streakfit/trivia/stats', authenticateStreakFitToken, async (req, res) => {
   try {
     const userId = req.user.userId;
 
+    // Overall stats
     const statsResult = await pool.query(`
       SELECT 
         COUNT(*) as total_answered,
@@ -2144,6 +2466,7 @@ app.get('/api/streakfit/trivia/stats', authenticateStreakFitToken, async (req, r
       WHERE user_id = $1
     `, [userId]);
 
+    // Stats by category
     const categoryStats = await pool.query(`
       SELECT 
         tq.category,
@@ -2157,6 +2480,7 @@ app.get('/api/streakfit/trivia/stats', authenticateStreakFitToken, async (req, r
       ORDER BY tq.category
     `, [userId]);
 
+    // Stats by difficulty
     const difficultyStats = await pool.query(`
       SELECT 
         tq.difficulty,
@@ -2169,6 +2493,7 @@ app.get('/api/streakfit/trivia/stats', authenticateStreakFitToken, async (req, r
       ORDER BY tq.difficulty
     `, [userId]);
 
+    // Recent answers
     const recentAnswers = await pool.query(`
       SELECT 
         ta.question_id,
@@ -2202,7 +2527,642 @@ app.get('/api/streakfit/trivia/stats', authenticateStreakFitToken, async (req, r
       byDifficulty: difficultyStats.rows,
       recentAnswers: recentAnswers.rows
     });
+// ============================================================================
+// INSERT #2: POP-UP CHALLENGE GENERATION FUNCTION
+// ============================================================================
+// Add this AFTER the trivia stats endpoint (around line 2300)
 
+// Helper function to generate 3 random pop-up challenges for a user's day
+async function generateDailyPopups(userId) {
+  try {
+    // Check if user already has popups for today
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    
+    const existing = await pool.query(
+      'SELECT COUNT(*) FROM streakfit_popup_challenges WHERE user_id = $1 AND scheduled_time >= $2',
+      [userId, todayStart]
+    );
+    
+    if (parseInt(existing.rows[0].count) >= 3) {
+      return { success: false, message: 'Popups already generated for today' };
+    }
+    
+    // Get user's fitness level
+    const userResult = await pool.query(
+      'SELECT fitness_level FROM streakfit_user_progress WHERE user_id = $1',
+      [userId]
+    );
+    
+    const fitnessLevel = userResult.rows[0]?.fitness_level || 'beginner';
+    
+    // Generate 3 random times throughout the day (9 AM - 9 PM)
+    const times = [];
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Morning (9-12), Afternoon (1-5), Evening (6-9)
+    const timeSlots = [
+      { start: 9, end: 12 },   // Morning
+      { start: 13, end: 17 },  // Afternoon  
+      { start: 18, end: 21 }   // Evening
+    ];
+    
+    for (const slot of timeSlots) {
+      const hour = slot.start + Math.floor(Math.random() * (slot.end - slot.start));
+      const minute = Math.floor(Math.random() * 60);
+      const scheduledTime = new Date(today);
+      scheduledTime.setHours(hour, minute, 0, 0);
+      times.push(scheduledTime);
+    }
+    
+    // Create 3 challenges (2 exercise, 1 trivia)
+    const challenges = [];
+    
+    // Challenge 1 & 2: Exercise
+    for (let i = 0; i < 2; i++) {
+      let workoutPool;
+      if (fitnessLevel === 'beginner') workoutPool = BEGINNER_WORKOUTS;
+      else if (fitnessLevel === 'intermediate') workoutPool = INTERMEDIATE_WORKOUTS;
+      else workoutPool = ADVANCED_WORKOUTS;
+      
+      const randomWorkout = workoutPool[Math.floor(Math.random() * workoutPool.length)];
+      
+      challenges.push({
+        challenge_type: 'exercise',
+        challenge_data: randomWorkout,
+        scheduled_time: times[i]
+      });
+    }
+    
+    // Challenge 3: Trivia
+    const triviaResult = await pool.query(`
+      SELECT * FROM trivia_questions 
+      WHERE id NOT IN (
+        SELECT question_id FROM streakfit_trivia_answers WHERE user_id = $1
+      )
+      ORDER BY RANDOM() 
+      LIMIT 1
+    `, [userId]);
+    
+    let triviaQuestion;
+    if (triviaResult.rows.length > 0) {
+      triviaQuestion = triviaResult.rows[0];
+    } else {
+      // If all answered, pick any random question
+      const anyTrivia = await pool.query('SELECT * FROM trivia_questions ORDER BY RANDOM() LIMIT 1');
+      triviaQuestion = anyTrivia.rows[0];
+    }
+    
+    challenges.push({
+      challenge_type: 'trivia',
+      challenge_data: {
+        id: triviaQuestion.id,
+        question: triviaQuestion.question,
+        options: triviaQuestion.options,
+        category: triviaQuestion.category,
+        difficulty: triviaQuestion.difficulty,
+        gems_value: triviaQuestion.gems_value
+      },
+      scheduled_time: times[2]
+    });
+    
+    // Insert all challenges
+    for (const challenge of challenges) {
+      await pool.query(`
+        INSERT INTO streakfit_popup_challenges 
+        (user_id, challenge_type, challenge_data, scheduled_time, created_at)
+        VALUES ($1, $2, $3, $4, NOW())
+      `, [userId, challenge.challenge_type, JSON.stringify(challenge.challenge_data), challenge.scheduled_time]);
+    }
+    
+    return { 
+      success: true, 
+      message: '3 popup challenges scheduled',
+      challenges: challenges.map(c => ({
+        type: c.challenge_type,
+        scheduled: c.scheduled_time
+      }))
+    };
+    
+  } catch (error) {
+    console.error('Generate popups error:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// INSERT #3: POP-UP CHALLENGE ENDPOINTS
+// ============================================================================
+// Add these AFTER the generateDailyPopups function
+
+// Get active popup for user (if it's time)
+app.get('/api/streakfit/popup/active', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const now = new Date();
+    
+    // Find next scheduled popup that hasn't been opened yet
+    const result = await pool.query(`
+      SELECT * FROM streakfit_popup_challenges
+      WHERE user_id = $1 
+      AND opened_at IS NULL
+      AND scheduled_time <= $2
+      ORDER BY scheduled_time ASC
+      LIMIT 1
+    `, [userId, now]);
+    
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        hasActivePopup: false,
+        message: 'No active popup challenges'
+      });
+    }
+    
+    const popup = result.rows[0];
+    
+    // Mark as opened
+    await pool.query(
+      'UPDATE streakfit_popup_challenges SET opened_at = NOW() WHERE id = $1',
+      [popup.id]
+    );
+    
+    res.json({
+      success: true,
+      hasActivePopup: true,
+      popup: {
+        id: popup.id,
+        type: popup.challenge_type,
+        data: popup.challenge_data,
+        scheduledTime: popup.scheduled_time,
+        openedAt: new Date()
+      }
+    });
+    
+  } catch (error) {
+    console.error('Get active popup error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get active popup'
+    });
+  }
+});
+
+// Complete a popup challenge
+app.post('/api/streakfit/popup/complete', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const { popupId, answer } = req.body;
+    const userId = req.user.userId;
+    
+    if (!popupId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Popup ID required'
+      });
+    }
+    
+    // Get popup details
+    const popupResult = await pool.query(
+      'SELECT * FROM streakfit_popup_challenges WHERE id = $1 AND user_id = $2',
+      [popupId, userId]
+    );
+    
+    if (popupResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Popup not found'
+      });
+    }
+    
+    const popup = popupResult.rows[0];
+    
+    if (popup.completed_at) {
+      return res.status(400).json({
+        success: false,
+        error: 'Popup already completed'
+      });
+    }
+    
+    // Calculate time to complete (in seconds)
+    const openedAt = new Date(popup.opened_at);
+    const completedAt = new Date();
+    const timeToComplete = Math.floor((completedAt - openedAt) / 1000);
+    
+    let gemsEarned = 0;
+    let speedBonus = 0;
+    let isCorrect = false;
+    
+    if (popup.challenge_type === 'trivia') {
+      // Check trivia answer
+      const triviaData = popup.challenge_data;
+      const questionResult = await pool.query(
+        'SELECT correct_answer, gems_value FROM trivia_questions WHERE id = $1',
+        [triviaData.id]
+      );
+      
+      if (questionResult.rows.length > 0) {
+        const correctAnswer = questionResult.rows[0].correct_answer;
+        isCorrect = parseInt(answer) === correctAnswer;
+        
+        if (isCorrect) {
+          gemsEarned = questionResult.rows[0].gems_value;
+          
+          // Speed bonus: answer in < 10 seconds = +50% gems
+          if (timeToComplete < 10) {
+            speedBonus = Math.floor(gemsEarned * 0.5);
+            gemsEarned += speedBonus;
+          }
+        }
+        
+        // Record trivia answer
+        await pool.query(`
+          INSERT INTO streakfit_trivia_answers 
+          (user_id, question_id, answer_given, is_correct, gems_earned, answered_at)
+          VALUES ($1, $2, $3, $4, $5, NOW())
+          ON CONFLICT (user_id, question_id) DO NOTHING
+        `, [userId, triviaData.id, answer, isCorrect, gemsEarned]);
+      }
+      
+    } else {
+      // Exercise challenge - always successful
+      const exerciseData = popup.challenge_data;
+      gemsEarned = Math.floor(exerciseData.gold / 2); // Convert gold to gems
+      isCorrect = true;
+      
+      // Speed bonus for exercise: complete in < 60 seconds = +25% gems
+      if (timeToComplete < 60) {
+        speedBonus = Math.floor(gemsEarned * 0.25);
+        gemsEarned += speedBonus;
+      }
+      
+      // Record exercise completion
+      await pool.query(`
+        INSERT INTO streakfit_workout_progress 
+        (user_id, workout_id, workout_name, gold_earned, xp_earned, completed_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+      `, [userId, exerciseData.id, exerciseData.name, exerciseData.gold, exerciseData.xp]);
+    }
+    
+    // Update popup as completed
+    await pool.query(`
+      UPDATE streakfit_popup_challenges 
+      SET completed_at = NOW(), 
+          time_to_complete = $1,
+          gems_earned = $2,
+          speed_bonus = $3
+      WHERE id = $4
+    `, [timeToComplete, gemsEarned, speedBonus, popupId]);
+    
+    res.json({
+      success: true,
+      completed: true,
+      type: popup.challenge_type,
+      correct: isCorrect,
+      gemsEarned: gemsEarned,
+      speedBonus: speedBonus,
+      timeToComplete: timeToComplete
+    });
+    
+  } catch (error) {
+    console.error('Complete popup error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to complete popup'
+    });
+  }
+});
+
+// Generate popups for user (call this once per day)
+app.post('/api/streakfit/popup/generate', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await generateDailyPopups(userId);
+    res.json(result);
+  } catch (error) {
+    console.error('Generate popups error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate popups'
+    });
+  }
+});
+
+// Get user's popup history
+app.get('/api/streakfit/popup/history', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    const result = await pool.query(`
+      SELECT 
+        id,
+        challenge_type,
+        challenge_data,
+        scheduled_time,
+        opened_at,
+        completed_at,
+        time_to_complete,
+        gems_earned,
+        speed_bonus
+      FROM streakfit_popup_challenges
+      WHERE user_id = $1
+      ORDER BY scheduled_time DESC
+      LIMIT 30
+    `, [userId]);
+    
+    res.json({
+      success: true,
+      history: result.rows
+    });
+    
+  } catch (error) {
+    console.error('Get popup history error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get popup history'
+    });
+  }
+});
+
+// ============================================================================
+// INSERT #4: DAILY WORKOUT ENDPOINTS
+// ============================================================================
+// Add these AFTER the popup endpoints
+
+// Get today's daily workout (4-5 exercises)
+app.get('/api/streakfit/daily-workout', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    // Get user's fitness level
+    const userResult = await pool.query(
+      'SELECT fitness_level FROM streakfit_user_progress WHERE user_id = $1',
+      [userId]
+    );
+    
+    const fitnessLevel = userResult.rows[0]?.fitness_level || 'beginner';
+    
+    // Select workout pool based on fitness level
+    let workoutPool;
+    if (fitnessLevel === 'beginner') workoutPool = BEGINNER_WORKOUTS;
+    else if (fitnessLevel === 'intermediate') workoutPool = INTERMEDIATE_WORKOUTS;
+    else workoutPool = ADVANCED_WORKOUTS;
+    
+    // Generate consistent daily workout based on date (same exercises each day)
+    const today = new Date().toISOString().split('T')[0];
+    const seed = today.split('-').join(''); // Use date as seed
+    
+    // Simple seeded random to get consistent exercises for the day
+    const dailyExercises = [];
+    const exerciseCount = 4 + (parseInt(seed.slice(-1)) % 2); // 4 or 5 exercises
+    
+    const selectedIndices = new Set();
+    while (selectedIndices.size < exerciseCount) {
+      const index = (parseInt(seed) + selectedIndices.size * 7) % workoutPool.length;
+      selectedIndices.add(index);
+    }
+    
+    Array.from(selectedIndices).forEach(index => {
+      dailyExercises.push(workoutPool[index]);
+    });
+    
+    // Check which exercises user has completed today
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    
+    const completedResult = await pool.query(`
+      SELECT workout_id FROM streakfit_workout_progress
+      WHERE user_id = $1 AND completed_at >= $2
+    `, [userId, todayStart]);
+    
+    const completedIds = new Set(completedResult.rows.map(r => r.workout_id));
+    
+    // Mark which exercises are completed
+    const workoutWithProgress = dailyExercises.map(exercise => ({
+      ...exercise,
+      completed: completedIds.has(exercise.id)
+    }));
+    
+    const totalExercises = dailyExercises.length;
+    const completedCount = workoutWithProgress.filter(e => e.completed).length;
+    const isComplete = completedCount === totalExercises;
+    
+    res.json({
+      success: true,
+      fitnessLevel: fitnessLevel,
+      exercises: workoutWithProgress,
+      progress: {
+        completed: completedCount,
+        total: totalExercises,
+        percentage: Math.round((completedCount / totalExercises) * 100),
+        isComplete: isComplete
+      }
+    });
+    
+  } catch (error) {
+    console.error('Get daily workout error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get daily workout'
+    });
+  }
+});
+
+// Complete one exercise from daily workout
+app.post('/api/streakfit/complete-exercise', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const { exerciseId } = req.body;
+    const userId = req.user.userId;
+    
+    if (!exerciseId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Exercise ID required'
+      });
+    }
+    
+    // Find the exercise in our workout pools
+    const exercise = ALL_WORKOUTS.find(w => w.id === exerciseId);
+    
+    if (!exercise) {
+      return res.status(404).json({
+        success: false,
+        error: 'Exercise not found'
+      });
+    }
+    
+    // Check if already completed today
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    
+    const existingResult = await pool.query(`
+      SELECT id FROM streakfit_workout_progress
+      WHERE user_id = $1 AND workout_id = $2 AND completed_at >= $3
+    `, [userId, exerciseId, todayStart]);
+    
+    if (existingResult.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Exercise already completed today'
+      });
+    }
+    
+    // Record completion
+    await pool.query(`
+      INSERT INTO streakfit_workout_progress 
+      (user_id, workout_id, workout_name, gold_earned, xp_earned, completed_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+    `, [userId, exercise.id, exercise.name, exercise.gold, exercise.xp]);
+    
+    // Check if daily workout is now complete
+    const userResult = await pool.query(
+      'SELECT fitness_level FROM streakfit_user_progress WHERE user_id = $1',
+      [userId]
+    );
+    
+    const fitnessLevel = userResult.rows[0]?.fitness_level || 'beginner';
+    
+    // Get today's workout again to check completion
+    let workoutPool;
+    if (fitnessLevel === 'beginner') workoutPool = BEGINNER_WORKOUTS;
+    else if (fitnessLevel === 'intermediate') workoutPool = INTERMEDIATE_WORKOUTS;
+    else workoutPool = ADVANCED_WORKOUTS;
+    
+    const today = new Date().toISOString().split('T')[0];
+    const seed = today.split('-').join('');
+    const exerciseCount = 4 + (parseInt(seed.slice(-1)) % 2);
+    
+    const completedTodayResult = await pool.query(`
+      SELECT COUNT(*) FROM streakfit_workout_progress
+      WHERE user_id = $1 AND completed_at >= $2
+    `, [userId, todayStart]);
+    
+    const completedCount = parseInt(completedTodayResult.rows[0].count);
+    const workoutComplete = completedCount >= exerciseCount;
+    
+    // If workout complete, award bonus and update streak
+    if (workoutComplete) {
+      const bonusGold = 50;
+      const bonusXP = 100;
+      
+      // Update streak
+      const streakResult = await pool.query(
+        'SELECT * FROM streakfit_streaks WHERE user_id = $1',
+        [userId]
+      );
+      
+      if (streakResult.rows.length > 0) {
+        const streak = streakResult.rows[0];
+        const lastCompleted = streak.last_completed ? new Date(streak.last_completed) : null;
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(0, 0, 0, 0);
+        
+        let newStreak = 1;
+        if (lastCompleted && lastCompleted >= yesterday) {
+          newStreak = streak.current_streak + 1;
+        }
+        
+        const newLongest = Math.max(newStreak, streak.longest_streak);
+        
+        await pool.query(`
+          UPDATE streakfit_streaks 
+          SET current_streak = $1, 
+              longest_streak = $2,
+              last_completed = NOW()
+          WHERE user_id = $3
+        `, [newStreak, newLongest, userId]);
+      }
+      
+      return res.json({
+        success: true,
+        exerciseCompleted: true,
+        workoutComplete: true,
+        goldEarned: exercise.gold + bonusGold,
+        xpEarned: exercise.xp + bonusXP,
+        bonusAwarded: true,
+        message: 'Daily workout complete! Bonus awarded!'
+      });
+    }
+    
+    res.json({
+      success: true,
+      exerciseCompleted: true,
+      workoutComplete: false,
+      goldEarned: exercise.gold,
+      xpEarned: exercise.xp,
+      remainingExercises: exerciseCount - completedCount
+    });
+    
+  } catch (error) {
+    console.error('Complete exercise error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to complete exercise'
+    });
+  }
+});
+
+// Update user fitness level
+app.post('/api/streakfit/update-fitness-level', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const { level } = req.body;
+    const userId = req.user.userId;
+    
+    if (!['beginner', 'intermediate', 'advanced'].includes(level)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid fitness level. Must be: beginner, intermediate, or advanced'
+      });
+    }
+    
+    await pool.query(`
+      INSERT INTO streakfit_user_progress (user_id, fitness_level, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (user_id) 
+      DO UPDATE SET fitness_level = $2, updated_at = NOW()
+    `, [userId, level]);
+    
+    res.json({
+      success: true,
+      fitnessLevel: level,
+      message: `Fitness level updated to ${level}`
+    });
+    
+  } catch (error) {
+    console.error('Update fitness level error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update fitness level'
+    });
+  }
+});
+
+// Get user fitness level
+app.get('/api/streakfit/fitness-level', authenticateStreakFitToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    const result = await pool.query(
+      'SELECT fitness_level FROM streakfit_user_progress WHERE user_id = $1',
+      [userId]
+    );
+    
+    const fitnessLevel = result.rows[0]?.fitness_level || 'beginner';
+    
+    res.json({
+      success: true,
+      fitnessLevel: fitnessLevel
+    });
+    
+  } catch (error) {
+    console.error('Get fitness level error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get fitness level'
+    });
+  }
+});
   } catch (error) {
     console.error('Get trivia stats error:', error);
     res.status(500).json({
@@ -2211,110 +3171,6 @@ app.get('/api/streakfit/trivia/stats', authenticateStreakFitToken, async (req, r
     });
   }
 });
-
-// ============================================================================
-// DATABASE SETUP
-// ============================================================================
-
-app.get('/api/streakfit/setup-database', async (req, res) => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS streakfit_users (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS streakfit_streaks (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
-        current_streak INTEGER DEFAULT 0,
-        longest_streak INTEGER DEFAULT 0,
-        total_calories INTEGER DEFAULT 0,
-        last_completed TIMESTAMP,
-        UNIQUE(user_id)
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS streakfit_challenges (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
-        challenge_id INTEGER NOT NULL,
-        challenge_name VARCHAR(255) NOT NULL,
-        calories INTEGER NOT NULL,
-        completed_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS streakfit_workout_progress (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
-        exercise_id INTEGER NOT NULL,
-        exercise_name VARCHAR(255) NOT NULL,
-        gold_earned INTEGER NOT NULL,
-        xp_earned INTEGER NOT NULL,
-        completed_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS streakfit_popup_challenges (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
-        challenge_type VARCHAR(50) NOT NULL,
-        challenge_data JSONB NOT NULL,
-        scheduled_time TIMESTAMP NOT NULL,
-        opened_at TIMESTAMP,
-        completed_at TIMESTAMP,
-        time_to_complete INTEGER,
-        gems_earned INTEGER DEFAULT 0,
-        speed_bonus INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS streakfit_user_progression (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES streakfit_users(id) ON DELETE CASCADE,
-        level VARCHAR(50) DEFAULT 'beginner',
-        total_gold INTEGER DEFAULT 0,
-        total_xp INTEGER DEFAULT 0,
-        total_gems INTEGER DEFAULT 0,
-        UNIQUE(user_id)
-      )
-    `);
-
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_popup_user_scheduled 
-      ON streakfit_popup_challenges(user_id, scheduled_time)
-    `);
-
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_popup_completed 
-      ON streakfit_popup_challenges(completed_at)
-    `);
-
-    res.json({
-      success: true,
-      message: 'StreakFit database tables created successfully'
-    });
-
-  } catch (error) {
-    console.error('Database setup error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
 // ============================================================================
 // START SERVER
 // ============================================================================
@@ -2326,775 +3182,4 @@ app.listen(PORT, () => {
   console.log(`🧪 Test endpoints available at /api/*/test-* routes`);
   console.log(`🔴 Production endpoints available with ?live=true parameter`);
   console.log(`🔥 StreakFit API available at /api/streakfit/* (AUTHENTICATED)`);
-  console.log(`💪 StreakFit workout system with pop-ups enabled`);
-});(
-      'SELECT * FROM streakfit_streaks WHERE user_id = $1',
-      [user.id]
-    );
-
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    res.json({
-      success: true,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email
-      },
-      streak: streakResult.rows[0] || {
-        current_streak: 0,
-        total_calories: 0
-      },
-      token: token
-    });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Login failed'
-    });
-  }
 });
-
-// ============================================================================
-// POPUP CHALLENGE SYSTEM
-// ============================================================================
-
-async function generateDailyPopups(userId) {
-  try {
-    await pool.query(`
-      DELETE FROM streakfit_popup_challenges 
-      WHERE user_id = $1 AND completed_at IS NULL
-    `, [userId]);
-
-    const userLevel = await pool.query(
-      'SELECT level FROM streakfit_user_progression WHERE user_id = $1',
-      [userId]
-    );
-
-    const level = userLevel.rows[0]?.level || 'beginner';
-    
-    let workoutPool;
-    if (level === 'advanced') {
-      workoutPool = ADVANCED_WORKOUTS;
-    } else if (level === 'intermediate') {
-      workoutPool = INTERMEDIATE_WORKOUTS;
-    } else {
-      workoutPool = BEGINNER_WORKOUTS;
-    }
-
-    const selectedExercises = [];
-    const usedIds = new Set();
-
-    while (selectedExercises.length < 2) {
-      const randomExercise = workoutPool[Math.floor(Math.random() * workoutPool.length)];
-      if (!usedIds.has(randomExercise.id)) {
-        selectedExercises.push(randomExercise);
-        usedIds.add(randomExercise.id);
-      }
-    }
-
-    const triviaResult = await pool.query(`
-      SELECT * FROM trivia_questions 
-      ORDER BY RANDOM() 
-      LIMIT 1
-    `);
-
-    const triviaQuestion = triviaResult.rows[0];
-
-    const today = new Date();
-    today.setHours(8, 0, 0, 0);
-    const endTime = new Date(today);
-    endTime.setHours(20, 0, 0, 0);
-
-    const timeSlots = [];
-    for (let i = 0; i < 3; i++) {
-      const randomTime = new Date(today.getTime() + Math.random() * (endTime.getTime() - today.getTime()));
-      timeSlots.push(randomTime);
-    }
-    timeSlots.sort((a, b) => a - b);
-
-    const popups = [];
-
-    const popup1 = await pool.query(`
-      INSERT INTO streakfit_popup_challenges 
-      (user_id, challenge_type, challenge_data, scheduled_time, created_at)
-      VALUES ($1, 'exercise', $2, $3, NOW())
-      RETURNING *
-    `, [userId, JSON.stringify(selectedExercises[0]), timeSlots[0]]);
-    popups.push(popup1.rows[0]);
-
-    const popup2 = await pool.query(`
-      INSERT INTO streakfit_popup_challenges 
-      (user_id, challenge_type, challenge_data, scheduled_time, created_at)
-      VALUES ($1, 'trivia', $2, $3, NOW())
-      RETURNING *
-    `, [userId, JSON.stringify({
-      id: triviaQuestion.id,
-      question: triviaQuestion.question,
-      options: triviaQuestion.options,
-      gems_value: triviaQuestion.gems_value,
-      category: triviaQuestion.category
-    }), timeSlots[1]]);
-    popups.push(popup2.rows[0]);
-
-    const popup3 = await pool.query(`
-      INSERT INTO streakfit_popup_challenges 
-      (user_id, challenge_type, challenge_data, scheduled_time, created_at)
-      VALUES ($1, 'exercise', $2, $3, NOW())
-      RETURNING *
-    `, [userId, JSON.stringify(selectedExercises[1]), timeSlots[2]]);
-    popups.push(popup3.rows[0]);
-
-    console.log(`✅ Generated 3 daily popups for user ${userId}`);
-    return popups;
-
-  } catch (error) {
-    console.error('Error generating daily popups:', error);
-    throw error;
-  }
-}
-
-app.get('/api/streakfit/active-popup', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const existingPopups = await pool.query(`
-      SELECT COUNT(*) as count
-      FROM streakfit_popup_challenges
-      WHERE user_id = $1 AND created_at >= $2
-    `, [userId, today]);
-
-    if (parseInt(existingPopups.rows[0].count) === 0) {
-      await generateDailyPopups(userId);
-    }
-
-    const result = await pool.query(`
-      SELECT * FROM streakfit_popup_challenges
-      WHERE user_id = $1 
-      AND completed_at IS NULL
-      AND scheduled_time <= NOW()
-      ORDER BY scheduled_time ASC
-      LIMIT 1
-    `, [userId]);
-
-    if (result.rows.length === 0) {
-      return res.json({
-        success: true,
-        hasPopup: false,
-        message: 'No popup challenges available right now'
-      });
-    }
-
-    const popup = result.rows[0];
-
-    res.json({
-      success: true,
-      hasPopup: true,
-      popup: {
-        id: popup.id,
-        type: popup.challenge_type,
-        data: popup.challenge_data,
-        scheduledTime: popup.scheduled_time
-      }
-    });
-
-  } catch (error) {
-    console.error('Get active popup error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get active popup'
-    });
-  }
-});
-
-app.post('/api/streakfit/popup-challenge/complete', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const { popupId, answer, timeToComplete } = req.body;
-    const userId = req.user.userId;
-
-    if (!popupId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Popup ID is required'
-      });
-    }
-
-    const popupResult = await pool.query(
-      'SELECT * FROM streakfit_popup_challenges WHERE id = $1 AND user_id = $2',
-      [popupId, userId]
-    );
-
-    if (popupResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Popup not found'
-      });
-    }
-
-    const popup = popupResult.rows[0];
-
-    if (popup.completed_at) {
-      return res.status(400).json({
-        success: false,
-        error: 'Popup already completed'
-      });
-    }
-
-    let gemsEarned = 0;
-    let goldEarned = 0;
-    let xpEarned = 0;
-    let speedBonus = 0;
-
-    if (timeToComplete && timeToComplete < 60) {
-      speedBonus = Math.floor((60 - timeToComplete) / 10) * 5;
-    }
-
-    if (popup.challenge_type === 'exercise') {
-      const exercise = popup.challenge_data;
-      goldEarned = exercise.gold;
-      xpEarned = exercise.xp;
-      gemsEarned = 10 + speedBonus;
-
-    } else if (popup.challenge_type === 'trivia') {
-      const triviaResult = await pool.query(
-        'SELECT correct_answer, gems_value FROM trivia_questions WHERE id = $1',
-        [popup.challenge_data.id]
-      );
-
-      if (triviaResult.rows.length > 0) {
-        const trivia = triviaResult.rows[0];
-        const isCorrect = trivia.correct_answer === parseInt(answer);
-
-        if (isCorrect) {
-          gemsEarned = trivia.gems_value + speedBonus;
-        } else {
-          gemsEarned = speedBonus;
-        }
-
-        await pool.query(`
-          INSERT INTO streakfit_trivia_answers 
-          (user_id, question_id, answer_given, is_correct, gems_earned, answered_at)
-          VALUES ($1, $2, $3, $4, $5, NOW())
-          ON CONFLICT (user_id, question_id) 
-          DO UPDATE SET 
-            answer_given = $3,
-            is_correct = $4,
-            gems_earned = $5,
-            answered_at = NOW()
-        `, [userId, popup.challenge_data.id, answer, isCorrect, gemsEarned]);
-      }
-    }
-
-    await pool.query(`
-      UPDATE streakfit_popup_challenges
-      SET completed_at = NOW(),
-          time_to_complete = $1,
-          gems_earned = $2,
-          speed_bonus = $3
-      WHERE id = $4
-    `, [timeToComplete, gemsEarned, speedBonus, popupId]);
-
-    await pool.query(`
-      UPDATE streakfit_user_progression
-      SET total_gems = total_gems + $1,
-          total_gold = total_gold + $2,
-          total_xp = total_xp + $3
-      WHERE user_id = $4
-    `, [gemsEarned, goldEarned, xpEarned, userId]);
-
-    const progressionResult = await pool.query(
-      'SELECT * FROM streakfit_user_progression WHERE user_id = $1',
-      [userId]
-    );
-
-    const progression = progressionResult.rows[0];
-    let leveledUp = false;
-    let newLevel = progression.level;
-
-    if (progression.level === 'beginner' && progression.total_xp >= 1000) {
-      newLevel = 'intermediate';
-      leveledUp = true;
-      await pool.query(
-        'UPDATE streakfit_user_progression SET level = $1 WHERE user_id = $2',
-        ['intermediate', userId]
-      );
-    } else if (progression.level === 'intermediate' && progression.total_xp >= 3000) {
-      newLevel = 'advanced';
-      leveledUp = true;
-      await pool.query(
-        'UPDATE streakfit_user_progression SET level = $1 WHERE user_id = $2',
-        ['advanced', userId]
-      );
-    }
-
-    res.json({
-      success: true,
-      rewards: {
-        gems: gemsEarned,
-        gold: goldEarned,
-        xp: xpEarned,
-        speedBonus: speedBonus
-      },
-      leveledUp: leveledUp,
-      newLevel: newLevel,
-      totalGems: progression.total_gems + gemsEarned,
-      totalGold: progression.total_gold + goldEarned,
-      totalXp: progression.total_xp + xpEarned
-    });
-
-  } catch (error) {
-    console.error('Complete popup error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to complete popup challenge'
-    });
-  }
-});
-
-app.get('/api/streakfit/popup-history', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-
-    const result = await pool.query(`
-      SELECT * FROM streakfit_popup_challenges
-      WHERE user_id = $1
-      ORDER BY created_at DESC
-      LIMIT 50
-    `, [userId]);
-
-    res.json({
-      success: true,
-      history: result.rows
-    });
-
-  } catch (error) {
-    console.error('Get popup history error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch popup history'
-    });
-  }
-});
-
-// ============================================================================
-// DAILY WORKOUT SYSTEM
-// ============================================================================
-
-app.get('/api/streakfit/daily-workout', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-
-    const userLevel = await pool.query(
-      'SELECT level FROM streakfit_user_progression WHERE user_id = $1',
-      [userId]
-    );
-
-    const level = userLevel.rows[0]?.level || 'beginner';
-    
-    let workoutPool;
-    if (level === 'advanced') {
-      workoutPool = ADVANCED_WORKOUTS;
-    } else if (level === 'intermediate') {
-      workoutPool = INTERMEDIATE_WORKOUTS;
-    } else {
-      workoutPool = BEGINNER_WORKOUTS;
-    }
-
-    const today = new Date();
-    const seed = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
-    
-    const selectedExercises = [];
-    const usedIds = new Set();
-    let tempSeed = seed;
-
-    while (selectedExercises.length < 5) {
-      tempSeed = (tempSeed * 9301 + 49297) % 233280;
-      const index = tempSeed % workoutPool.length;
-      const exercise = workoutPool[index];
-      
-      if (!usedIds.has(exercise.id)) {
-        selectedExercises.push(exercise);
-        usedIds.add(exercise.id);
-      }
-    }
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const completedResult = await pool.query(`
-      SELECT exercise_id FROM streakfit_workout_progress
-      WHERE user_id = $1 AND completed_at >= $2
-    `, [userId, todayStart]);
-
-    const completedIds = new Set(completedResult.rows.map(r => r.exercise_id));
-
-    const workoutWithStatus = selectedExercises.map(exercise => ({
-      ...exercise,
-      completed: completedIds.has(exercise.id)
-    }));
-
-    res.json({
-      success: true,
-      workout: workoutWithStatus,
-      level: level,
-      date: today.toISOString().split('T')[0]
-    });
-
-  } catch (error) {
-    console.error('Get daily workout error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch daily workout'
-    });
-  }
-});
-
-app.post('/api/streakfit/complete-exercise', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const { exerciseId } = req.body;
-    const userId = req.user.userId;
-
-    if (!exerciseId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Exercise ID is required'
-      });
-    }
-
-    const exercise = ALL_WORKOUTS.find(w => w.id === exerciseId);
-
-    if (!exercise) {
-      return res.status(404).json({
-        success: false,
-        error: 'Exercise not found'
-      });
-    }
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const existingCompletion = await pool.query(`
-      SELECT * FROM streakfit_workout_progress
-      WHERE user_id = $1 AND exercise_id = $2 AND completed_at >= $3
-    `, [userId, exerciseId, todayStart]);
-
-    if (existingCompletion.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Exercise already completed today'
-      });
-    }
-
-    await pool.query(`
-      INSERT INTO streakfit_workout_progress
-      (user_id, exercise_id, exercise_name, gold_earned, xp_earned, completed_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
-    `, [userId, exerciseId, exercise.name, exercise.gold, exercise.xp]);
-
-    await pool.query(`
-      UPDATE streakfit_user_progression
-      SET total_gold = total_gold + $1,
-          total_xp = total_xp + $2
-      WHERE user_id = $3
-    `, [exercise.gold, exercise.xp, userId]);
-
-    const progressionResult = await pool.query(
-      'SELECT * FROM streakfit_user_progression WHERE user_id = $1',
-      [userId]
-    );
-
-    const progression = progressionResult.rows[0];
-    let leveledUp = false;
-    let newLevel = progression.level;
-
-    if (progression.level === 'beginner' && progression.total_xp >= 1000) {
-      newLevel = 'intermediate';
-      leveledUp = true;
-      await pool.query(
-        'UPDATE streakfit_user_progression SET level = $1 WHERE user_id = $2',
-        ['intermediate', userId]
-      );
-    } else if (progression.level === 'intermediate' && progression.total_xp >= 3000) {
-      newLevel = 'advanced';
-      leveledUp = true;
-      await pool.query(
-        'UPDATE streakfit_user_progression SET level = $1 WHERE user_id = $2',
-        ['advanced', userId]
-      );
-    }
-
-    const completedTodayResult = await pool.query(`
-      SELECT COUNT(*) as count FROM streakfit_workout_progress
-      WHERE user_id = $1 AND completed_at >= $2
-    `, [userId, todayStart]);
-
-    const completedCount = parseInt(completedTodayResult.rows[0].count);
-    const dailyWorkoutComplete = completedCount >= 5;
-
-    if (dailyWorkoutComplete) {
-      const streakResult = await pool.query(
-        'SELECT * FROM streakfit_streaks WHERE user_id = $1',
-        [userId]
-      );
-
-      if (streakResult.rows.length > 0) {
-        const streak = streakResult.rows[0];
-        const lastCompleted = streak.last_completed ? new Date(streak.last_completed) : null;
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        yesterday.setHours(0, 0, 0, 0);
-
-        let newStreak = 1;
-        if (lastCompleted && lastCompleted >= yesterday) {
-          newStreak = streak.current_streak + 1;
-        }
-
-        const longestStreak = Math.max(newStreak, streak.longest_streak);
-
-        await pool.query(`
-          UPDATE streakfit_streaks
-          SET current_streak = $1,
-              longest_streak = $2,
-              last_completed = NOW()
-          WHERE user_id = $3
-        `, [newStreak, longestStreak, userId]);
-      }
-    }
-
-    res.json({
-      success: true,
-      exercise: {
-        id: exercise.id,
-        name: exercise.name,
-        goldEarned: exercise.gold,
-        xpEarned: exercise.xp
-      },
-      dailyWorkoutComplete: dailyWorkoutComplete,
-      leveledUp: leveledUp,
-      newLevel: newLevel,
-      totalGold: progression.total_gold + exercise.gold,
-      totalXp: progression.total_xp + exercise.xp
-    });
-
-  } catch (error) {
-    console.error('Complete exercise error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to complete exercise'
-    });
-  }
-});
-
-app.get('/api/streakfit/progression', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-
-    const result = await pool.query(
-      'SELECT * FROM streakfit_user_progression WHERE user_id = $1',
-      [userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Progression not found'
-      });
-    }
-
-    const progression = result.rows[0];
-
-    let xpForNextLevel = 0;
-    if (progression.level === 'beginner') {
-      xpForNextLevel = 1000;
-    } else if (progression.level === 'intermediate') {
-      xpForNextLevel = 3000;
-    } else {
-      xpForNextLevel = progression.total_xp;
-    }
-
-    res.json({
-      success: true,
-      progression: {
-        level: progression.level,
-        totalGold: progression.total_gold,
-        totalXp: progression.total_xp,
-        totalGems: progression.total_gems,
-        xpForNextLevel: xpForNextLevel,
-        xpProgress: progression.level === 'advanced' ? 100 : Math.min(100, (progression.total_xp / xpForNextLevel) * 100)
-      }
-    });
-
-  } catch (error) {
-    console.error('Get progression error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch progression'
-    });
-  }
-});
-
-// ============================================================================
-// STREAKFIT LEADERBOARD AND STATS
-// ============================================================================
-
-app.get('/api/streakfit/leaderboard', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        u.id,
-        u.name,
-        s.current_streak,
-        s.longest_streak,
-        s.total_calories,
-        p.level,
-        p.total_gold,
-        p.total_xp,
-        p.total_gems
-      FROM streakfit_users u
-      JOIN streakfit_streaks s ON u.id = s.user_id
-      LEFT JOIN streakfit_user_progression p ON u.id = p.user_id
-      ORDER BY s.current_streak DESC, p.total_xp DESC
-      LIMIT 50
-    `);
-
-    res.json({
-      success: true,
-      leaderboard: result.rows
-    });
-
-  } catch (error) {
-    console.error('Leaderboard error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch leaderboard'
-    });
-  }
-});
-
-app.post('/api/streakfit/complete-challenge', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const { challengeId, challengeName, calories } = req.body;
-    const userId = req.user.userId;
-
-    if (!challengeId || !challengeName || !calories) {
-      return res.status(400).json({
-        success: false,
-        error: 'Challenge ID, name, and calories are required'
-      });
-    }
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const existingChallenge = await pool.query(
-      `SELECT * FROM streakfit_challenges 
-       WHERE user_id = $1 AND completed_at >= $2`,
-      [userId, todayStart]
-    );
-
-    if (existingChallenge.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'You have already completed a challenge today'
-      });
-    }
-
-    await pool.query(
-      `INSERT INTO streakfit_challenges (user_id, challenge_id, challenge_name, calories, completed_at)
-       VALUES ($1, $2, $3, $4, NOW())`,
-      [userId, challengeId, challengeName, calories]
-    );
-
-    const streakResult = await pool.query(
-      'SELECT * FROM streakfit_streaks WHERE user_id = $1',
-      [userId]
-    );
-
-    let currentStreak = 0;
-    let longestStreak = 0;
-    let totalCalories = 0;
-
-    if (streakResult.rows.length > 0) {
-      const streak = streakResult.rows[0];
-      const lastCompleted = streak.last_completed ? new Date(streak.last_completed) : null;
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      yesterday.setHours(0, 0, 0, 0);
-
-      if (lastCompleted && lastCompleted >= yesterday) {
-        currentStreak = streak.current_streak + 1;
-      } else {
-        currentStreak = 1;
-      }
-
-      longestStreak = Math.max(currentStreak, streak.longest_streak);
-      totalCalories = streak.total_calories + calories;
-    } else {
-      currentStreak = 1;
-      longestStreak = 1;
-      totalCalories = calories;
-    }
-
-    await pool.query(
-      `INSERT INTO streakfit_streaks (user_id, current_streak, longest_streak, total_calories, last_completed)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (user_id) 
-       DO UPDATE SET 
-         current_streak = $2,
-         longest_streak = $3,
-         total_calories = $4,
-         last_completed = NOW()`,
-      [userId, currentStreak, longestStreak, totalCalories]
-    );
-
-    res.json({
-      success: true,
-      streak: {
-        current_streak: currentStreak,
-        longest_streak: longestStreak,
-        total_calories: totalCalories
-      }
-    });
-
-  } catch (error) {
-    console.error('Complete challenge error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to complete challenge'
-    });
-  }
-});
-
-app.get('/api/streakfit/user/:userId', authenticateStreakFitToken, async (req, res) => {
-  try {
-    const { userId } = req.params;
-
-    if (parseInt(userId) !== req.user.userId) {
-      return res.status(403).json({
-        success: false,
-        error: 'Access denied'
-      });
-    }
-
-    const userResult = await pool.query(
-      'SELECT id, name, email, created_at FROM streakfit_users WHERE id = $1',
-      [userId]
-    );
-
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-
-    const streakResult = await pool.query
