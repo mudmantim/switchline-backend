@@ -2527,6 +2527,16 @@ app.get('/api/streakfit/trivia/stats', authenticateStreakFitToken, async (req, r
       byDifficulty: difficultyStats.rows,
       recentAnswers: recentAnswers.rows
     });
+    
+    } catch (error) {
+    console.error('Get trivia stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trivia stats'
+    });
+  }
+});
+
 // ============================================================================
 // INSERT #2: POP-UP CHALLENGE GENERATION FUNCTION
 // ============================================================================
